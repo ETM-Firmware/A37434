@@ -1,5 +1,5 @@
-#ifndef __A36465_SETTINGS
-#define __A36465_SETTINGS
+#ifndef __A37434_SETTINGS
+#define __A37434_SETTINGS
 
 
 
