@@ -2,7 +2,6 @@
 #ifndef __A36465_H
 #define __A36465_H
 
-
 #define FCY_CLK 10000000
 
 
@@ -14,6 +13,11 @@
 
 #include "P1395_CAN_SLAVE.h"
 #include "ETM.h"
+#include "A36465_SETTINGS.h"
+#include "MCP4725.h"
+
+
+
 
 /*
   Hardware Module Resource Usage
@@ -22,90 +26,44 @@
   Timer4 - Used/Configured by ETM CAN - Used to Time sending of messages (status update / logging data and such) 
   Timer5 - Used/Configured by ETM CAN - Used for detecting error on can bus
 
-  SPI1   - Used/Configured by LTC265X Module
-  I2C    - Used/Configured by EEPROM Module
+  SPI2   - Used/Configured by External ADC
+  I2C    - Used/Configured by EEPROM Module, DAC Module
 
-
+  Timer1 - Used for timing motor steps
   Timer3 - Used for 10ms Generation
-  
   ADC Module - See Below For Specifics
   Motor Control PWM Module - Used to control AFC stepper motor
-  Timer1 - Used for timing motor steps
 
 */
 
 
-// ----------------- IO PIN CONFIGURATION -------------------- //
-// All unused pins will be set to outputs and logic zero
-// LAT values default to 0 at startup so they do not need to be manually set
-
-// Pins to be configured as inputs
 /*
-
-  RA9  - ADC VREF-
-  RA10 - ADC VREF+
-  RA14 - Trigger Input - SMA
-  RA15 - Sample Parameter    (PLC ONLY)
- 
-  RB0  - ICD - PROGRAM
-  RB1  - ICD - PROGRAM
-  RB2  - Analog Input - Reverse Pwr          (S/H #3)
-  RB3  - Analog Input - AFT AFC "A" Output   (S/H #1)      (until we need quadrature encoder module)
-  RB4  - Analog Input - AFT AFC "B" output   (S/H #2)      (until we need quadrature encoder module)
-  RB5  - Digital Input - Quadrature Encoder Module
-  RB6  - Analog Input - PLC Parameter Select (S/H #4)
-  RB7  - Analog Input - PLC Parameter Value  (S/H #4)
-  RB8  - Analog Input - Forward Pwr          (S/H #4)
-  RB9  - Analog Input - ADC DAC C            (S/H #4)
-  RB13 - Analog Input - 5V MON               (S/H #4)
-  RB14 - Analog Input - 15V MON              (S/H #4)
-  RB15 - Analog Input - -15V MON             (S/H #4)
-
-  RC1  - DAC LDAC  (Configured by DAC module)
-  RC3  - DAC CS/LD (Configured by DAC module)
-
-  RD1  - Motor Drv Fault
-  RD4  - Spare Digital Input (PLC ONLY)
-  RD8  - AFC/Manual Select   (PLC ONLY)
-  RD9  - Manual Down         (PLC ONLY)
-  RD10 - Manul Up            (PLC ONLY)
-  RD13 - Fiber Trigger In (connects to input capture module so we can use pic to calculate PRF)
-
-  RE1 - PWM 1H (Configured By Pic Module)
-  RE3 - PWM 2H (Configured By Pic Module)
-  RE5 - PWM 3H (Configured By Pic Module)
-  RE7 - PWM 4H (Configured By Pic Module)
-  RE8  - Fiber Trigger In
-  RE9  - Fiber Energy Select In
-
-  RF0  - CAN 1 (Configured By Pic Module)
-  RF1  - CAN 1 (Configured By Pic Module)
-  RF6  - SPI 1 (Configured By Pic Module)
-  RF7  - SPI 1 (Configured By Pic Module)
-  RF8  - SPI 1 (Configured By Pic Module)
-
-  RG2  - I2C   (Configured By Pic Module)
-  RG3  - I2C   (Configured By Pic Module)
-  RG7  - Reset Detect
+  ------------------- I/O PIN CONFIGURATION -------------------------
+  Pins that need to be configured as outputs
   
-  Assuming we use the quadrature encoder module the following changes happen
-  RB0, RB1 become Analog Inputs
-  RB3 and RB4 become Digital Inputs
-  AFT AFC "A" Output is routed to RB0        (S/H #1)
-  AFT AFC "B" Output is routed to RB1        (S/H #2)
+  C1  PIN_INPUT_A_CS
+  C3  PIN_INPUT_B_CS
+  C13 PIN_MOTOR_DRV_ISET_A1
+  C14 PIN_MOTOR_DRV_ISET_A0
 
+  D0  PIN_MOTOR_DRV_ISET_B0
+  D2  PIN_MOTOR_DRV_SLEEP_NOT
+  D3  PIN_MOTOR_DRV_RESET_NOT
+  D6  PIN_PIC_ADC_CONVERT
+  D11 PIN_MOTOR_DRV_ISET_B1
+  D12 PIN_MOTOR_DRV_DECAY_SELECT
+
+  
 
 */
 
-
-
-#define A36465_TRISA_VALUE 0b1100011000000000 
-#define A36465_TRISB_VALUE 0b1110001111111111 
-#define A36465_TRISC_VALUE 0b0000000000001010 
-#define A36465_TRISD_VALUE 0b0010011100010010
-#define A36465_TRISE_VALUE 0b0000001110101010 
-#define A36465_TRISF_VALUE 0b0000000111000011 
-#define A36465_TRISG_VALUE 0b0000000010001100
+#define A36465_TRISA_VALUE 0b1111111111111111
+#define A36465_TRISB_VALUE 0b1111111111111111
+#define A36465_TRISC_VALUE 0b1001111111110101
+#define A36465_TRISD_VALUE 0b1110011110111010
+#define A36465_TRISE_VALUE 0b1111111111111111
+#define A36465_TRISF_VALUE 0b1111111111111111
+#define A36465_TRISG_VALUE 0b1111111111111111
 
 
 // ------------- PIN DEFINITIONS ------------------- ///
@@ -113,7 +71,7 @@
 // MOTOR CONTROL PINS
 #define PIN_MOTOR_DRV_RESET_NOT          _LATD3
 #define PIN_MOTOR_DRV_SLEEP_NOT          _LATD2
-#define PIN_MOTOR_DRV_DECAY_SELECY       _LATD12
+#define PIN_MOTOR_DRV_DECAY_SELECT       _LATD12
 
 #define PIN_MOTOR_DRV_ISET_A0            _LATC14
 #define PIN_MOTOR_DRV_ISET_A1            _LATC13
@@ -121,6 +79,13 @@
 #define PIN_MOTOR_DRV_ISET_B1            _LATD11
 
 #define PIN_MOTOR_DRV_INPUT_NOT_FAULT    _RD1
+
+
+// ADC Interface Pins
+#define PIN_INPUT_A_CS                   _LATC1
+#define PIN_INPUT_B_CS                   _LATC3
+#define PIN_PIC_ADC_CONVERT              _LATD6
+#define OLL_SELECT_ADC                   0
 
 
 // Test Points
@@ -133,18 +98,13 @@
 
 #define PIN_RESET_DETECT                 _RG7
 
-// LEDs
-//#define PIN_LED_OPERATIONAL_GREEN        _LATG6  // Configured by can Module
-//#define PIN_LED_A_RED                    _LATG8  // Configured by can Module
 
 
 
 // ---------------- Motor Configuration Values ------------- //
-#define MOTOR_PWM_FREQ            20000        // Motor Drive Frequency is 10KHz
-#define MOTOR_SPEED_FAST          200          // Motor Speed in Full Steps per Second in "Fast Mode"
-#define MOTOR_SPEED_SLOW          200           // 
-#define FCY_CLK                             10000000      // 10 MHz
-#define DELAY_SWITCH_TO_LOW_POWER_MODE 200
+#define MOTOR_PWM_FREQ                    20000        // Motor Drive Frequency is 10KHz
+#define FCY_CLK                           10000000      // 10 MHz
+#define DELAY_SWITCH_TO_LOW_POWER_MODE    200
 
 
 // --------------------- T1 Configuration -----
@@ -190,40 +150,87 @@
 
 // -------------------  ADC CONFIGURATION ----------------- //
 
-#define ADCON1_SETTING   (ADC_MODULE_ON & ADC_IDLE_STOP & ADC_FORMAT_INTG & ADC_CLK_MANUAL & ADC_SAMPLE_SIMULTANEOUS & ADC_AUTO_SAMPLING_ON)
-#define ADCON2_SETTING   (ADC_VREF_EXT_EXT & ADC_SCAN_OFF & ADC_CONVERT_CH_0ABC & ADC_SAMPLES_PER_INT_1 & ADC_ALT_BUF_ON & ADC_ALT_INPUT_OFF)
+/*
+  ADC is configured as following
+  CHN0 - AN4(B Input), Vref-
+  CHN1 - AN3(A Input), Vref-
+  CHN2 - AN4(B Input), Vref-
+  CHN3 - AN5(unused), Vref-
+*/
+
+#define ADCON1_SETTING   (ADC_MODULE_ON & ADC_IDLE_STOP & ADC_FORMAT_INTG & ADC_CLK_INT0 & ADC_SAMPLE_SIMULTANEOUS & ADC_AUTO_SAMPLING_ON)
+#define ADCON2_SETTING   (ADC_VREF_EXT_EXT & ADC_SCAN_OFF & ADC_CONVERT_CH_0ABC & ADC_SAMPLES_PER_INT_1 & ADC_ALT_BUF_OFF & ADC_ALT_INPUT_OFF)
 #define ADCON3_SETTING   (ADC_SAMPLE_TIME_10 & ADC_CONV_CLK_SYSTEM & ADC_CONV_CLK_2Tcy)
-#define ADCHS_SETTING    (ADC_CHX_POS_SAMPLEA_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEA_VREFN & ADC_CH0_POS_SAMPLEA_AN8 & ADC_CH0_NEG_SAMPLEA_VREFN & ADC_CHX_POS_SAMPLEB_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEB_VREFN & ADC_CH0_POS_SAMPLEB_AN8 & ADC_CH0_NEG_SAMPLEB_VREFN)
-#define ADPCFG_SETTING   (ENABLE_AN2_ANA & ENABLE_AN3_ANA & ENABLE_AN4_ANA & ENABLE_AN5_ANA & ENABLE_AN8_ANA)
+#define ADCHS_SETTING    (ADC_CHX_POS_SAMPLEA_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEA_VREFN & ADC_CH0_POS_SAMPLEA_AN4 & ADC_CH0_NEG_SAMPLEA_VREFN & ADC_CHX_POS_SAMPLEB_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEB_VREFN & ADC_CH0_POS_SAMPLEB_AN4 & ADC_CH0_NEG_SAMPLEB_VREFN)
+#define ADPCFG_SETTING   (ENABLE_AN3_ANA & ENABLE_AN4_ANA & ENABLE_AN9_ANA & ENABLE_AN13_ANA & ENABLE_AN14_ANA)
 #define ADCSSL_SETTING   (SKIP_SCAN_AN0 & SKIP_SCAN_AN1 & SKIP_SCAN_AN2 & SKIP_SCAN_AN6 & SKIP_SCAN_AN7 & SKIP_SCAN_AN9 & SKIP_SCAN_AN10 & SKIP_SCAN_AN11 & SKIP_SCAN_AN12 & SKIP_SCAN_AN13 & SKIP_SCAN_AN14 & SKIP_SCAN_AN15)
 
+
+
+
 typedef struct {
-  unsigned int control_state;
-  unsigned int manual_target_position;
-  unsigned int sample_complete;
   //int          frequency_error_filtered;
-  unsigned int fast_afc_done;
-  unsigned int pulses_on_this_run;
-  unsigned long pulse_off_counter;
-  unsigned int afc_hot_position;
-  AnalogOutput aft_control_voltage;
-  AnalogInput  aft_A_sample;
-  AnalogInput  aft_B_sample;
-  unsigned int aft_A_sample_filtered;
-  unsigned int aft_B_sample_filtered;
+  //unsigned long pulse_off_counter;
+  //AnalogOutput aft_control_voltage;
+  //unsigned int aft_A_sample_filtered;
+  //unsigned int aft_B_sample_filtered;
   //unsigned int sample_index;
-  unsigned int aft_A_sample_history[16];
-  unsigned int aft_B_sample_history[16];
-  unsigned int aft_filtered_error_for_client;
+  //unsigned int aft_A_sample_history[16];
+  //unsigned int aft_B_sample_history[16];
+  //unsigned int aft_filtered_error_for_client;
+
+  //unsigned int aft_control_voltage_low_energy;
+  //unsigned int aft_control_voltage_high_energy;
 
   unsigned int sample_index;
 
-  unsigned int aft_control_voltage_low_energy;
-  unsigned int aft_control_voltage_high_energy;
+
+  unsigned int control_state;
+  unsigned int manual_target_position;
+  unsigned int sample_complete;
+
+  unsigned int fast_afc_done;
+  unsigned int pulses_on_this_run;
+  unsigned int afc_hot_position;
+
+  AnalogInput  reverse_power_sample;
+  AnalogInput  forward_power_sample;
+
+  unsigned int time_off_counter;
+  unsigned int inversion_counter;
+  unsigned int no_decision_counter;
+  unsigned int position_at_trigger;
+
+  unsigned int a_adc_reading_internal;
+  unsigned int b_adc_reading_internal;
+
+  unsigned int a_adc_reading_external;
+  unsigned int b_adc_reading_external;
+
+  unsigned int reverse_power_db;
+  unsigned int forward_power_db;
+
 
 } AFCControlData;
 
 extern AFCControlData global_data_A36465;
+
+
+
+#define MOVE_UP       0
+#define MOVE_NO_DATA  1
+#define MOVE_DOWN     2
+
+
+#define STATE_STARTUP       0x10
+#define STATE_AUTO_ZERO     0x20
+#define STATE_AUTO_HOME     0x30
+#define STATE_RUN_AFC       0x40
+#define STATE_RUN_MANUAL    0x50
+
+
+
+
 
 
 typedef struct {
@@ -236,14 +243,28 @@ typedef struct {
   unsigned int time_steps_stopped;
 } STEPPER_MOTOR;
 
-extern STEPPER_MOTOR afc_motor;
 
-#define _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS          _STATUS_0
-#define _STATUS_AFC_MODE_MANUAL_MODE                    _WARNING_0
+typedef struct {
+  unsigned int position[16];
+  unsigned int reverse_power[16];
+  unsigned int forward_power[16];
+  unsigned int active_index;
+} TYPE_POWER_READINGS;
 
 
-#define _FAULT_CAN_COMMUNICATION_LATCHED                _FAULT_0
+#define _STATUS_AFC_MODE_MANUAL_MODE                    _LOGGED_STATUS_0
+#define _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS          _LOGGED_STATUS_1
+// DPARKER - REALLY NEED TO UPDATE THE DOCUMENTATION
+
+#define _FAULT_CAN_COMMUNICATION_LATCHED                _LOGGED_FAULT_0
 
 
+
+
+#define FULL_POWER_TABLE_VALUES 50,50,50,50,50,50,50,50,253,253,253,253,253,253,253,253,425,425,425,425,425,425,425,425,540,540,540,540,540,540,540,540,580,580,580,580,580,580,580,580,540,540,540,540,540,540,540,540,425,425,425,425,425,425,425,425,253,253,253,253,253,253,253,253,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50 
+
+#define LOW_POWER_TABLE_VALUES 50,50,50,50,50,50,50,50,165,165,165,165,165,165,165,165,262,262,262,262,262,262,262,262,327,327,327,327,327,327,327,327,350,350,350,350,350,350,350,350,327,327,327,327,327,327,327,327,262,262,262,262,262,262,262,262,165,165,165,165,165,165,165,165,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50
+
+#define COOL_DOWN_TABLE_VALUES 31130,31260,28985,27246,25880,24768,23833,23023,22303,21651,21052,20495,19972,19479,19012,18568,18146,17742,17357,16988,16635,16296,15972,15660,15361,15074,14798,14532,14277,14031,13794,13565,13345,13132,12927,12728,12536,12351,12171,11997,11828,11665,11506,11352,11202,11057,10916,10778,10644,10514,10387,10263,10142,10024,9908,9796,9686,9578,9473,9370,9269,9170,9073,8978,8884,8793,8703,8614,8528,8442,8359,8276,8195,8115,8037,7959,7883,7808,7734,7661,7589,7518,7448,7379,7311,7243,7177,7111,7047,6983,6919,6857,6795,6734,6674,6614,6555,6497,6439,6382,6326,6270,6215,6160,6106,6053,6000,5947,5895,5844,5793,5742,5693,5643,5594,5546,5498,5450,5403,5356,5310,5264,5219,5174,5130,5085,5042,4998,4956,4913,4871,4829,4788,4747,4706,4666,4626,4586,4547,4508,4470,4431,4394,4356,4319,4282,4245,4209,4173,4138,4102,4067,4033,3998,3964,3931,3897,3864,3831,3798,3766,3734,3702,3671,3639,3608,3578,3547,3517,3487,3457,3428,3399,3370,3341,3313,3285,3257,3229,3202,3174,3147,3121,3094,3068,3042,3016,2990,2965,2940,2915,2890,2865,2841,2817,2793,2769,2745,2722,2699,2676,2653,2631,2608,2586,2564,2542,2521,2499,2478,2457,2436,2416,2395,2375,2354,2334,2315,2295,2275,2256,2237,2218,2199,2180,2162,2143,2125,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 #endif
