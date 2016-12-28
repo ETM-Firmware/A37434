@@ -6,6 +6,10 @@
 
 //#define __USE_AFT_MODULE
 
+unsigned int reading_array_internal[1024];
+unsigned int reading_array_external[1024];
+unsigned int reading_array_location = 0;
+
 
 // ------------------ PROCESSOR CONFIGURATION ------------------------//
 _FOSC(ECIO & CSW_FSCM_OFF);                                               // 40MHz External Osc creates 10MHz FCY
@@ -78,6 +82,7 @@ void DoStateMachine(void) {
 
   case STATE_STARTUP:
     InitializeA37434();
+    _TRISG1 = 0;  // FOR DEBUGGING
     afc_motor.min_position = 0;
     afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.home_position = AFC_MOTOR_MAX_POSITION;
@@ -121,6 +126,7 @@ void DoStateMachine(void) {
       global_data_A37434.manual_target_position = afc_motor.target_position;
       if (global_data_A37434.sample_complete) {
 	DoPostPulseProcess();
+	DoAFCReversePower();
       }
 
       if (_STATUS_AFC_MODE_MANUAL_MODE) {
@@ -208,7 +214,7 @@ void InitializeA37434(void) {
   _INT1IF = 0;
   _INT1IP = 7;
   _INT1IE = 1;
-  _INT1EP = 1;
+  _INT1EP = 0;
   
   // Initialize the status register and load the inhibit and fault masks
   _FAULT_REGISTER = 0;
@@ -280,7 +286,29 @@ void InitializeA37434(void) {
 
 void DoPostPulseProcess(void) {
   global_data_A37434.sample_complete = 0;
-  DoAFCReversePower();
+  
+  // First - Scale and calibrate the power readings
+  // Reverse Power Samples are stored in 100uV Units
+  // Then convert to dB
+  global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
+  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_internal;
+  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
+  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
+  global_data_A37434.reverse_power_db = ConvertToDBMiniCircuit(global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
+  global_data_A37434.forward_power_db = ConvertToDBMiniCircuit(global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
+  
+
+  ETMCanSlaveSetDebugRegister(0x0, ADCBUF1);
+  ETMCanSlaveSetDebugRegister(0x1, ADCBUF0);
+  ETMCanSlaveSetDebugRegister(0x2, global_data_A37434.a_adc_reading_internal);
+  ETMCanSlaveSetDebugRegister(0x3, global_data_A37434.b_adc_reading_internal);
+  ETMCanSlaveSetDebugRegister(0x4, global_data_A37434.a_adc_reading_external);
+  ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.b_adc_reading_external);
+  ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.reverse_power_db);
+  ETMCanSlaveSetDebugRegister(0x7, global_data_A37434.forward_power_db);
+
+
+
   if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
     ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_0,
 			    global_data_A37434.sample_index,
@@ -306,17 +334,6 @@ void DoAFCReversePower(void) {
   unsigned int target_delta;
   unsigned int n;
 
-  // First - Scale and calibrate the power readings
-  // Reverse Power Samples are stored in 100uV Units
-  // Then convert to dB
-  global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
-  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_internal;
-  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
-  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
-  global_data_A37434.reverse_power_db = ConvertToDBMiniCircuit(global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
-  global_data_A37434.forward_power_db = ConvertToDBMiniCircuit(global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
-  
-  
   if (global_data_A37434.position_at_trigger > power_readings.position[power_readings.active_index]) {
     previous_direction = MOVE_UP;
   } else {
@@ -391,9 +408,9 @@ void DoAFCReversePower(void) {
   }
 
   if (new_direction == MOVE_UP) {
-    afc_motor.target_position += target_delta; 
+    afc_motor.target_position = afc_motor.current_position + target_delta; 
   } else {
-    afc_motor.target_position -= target_delta;
+    afc_motor.target_position = afc_motor.current_position - target_delta;
   }
 }
 
@@ -577,6 +594,8 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
      The INT1 Interrupt is read back data from the ADCs (they should have already been sampled)
   */
   
+  PIN_TEST_POINT_A = 1;
+
   __delay32(80);  // wait 8us to pulse to terminate
 
   global_data_A37434.position_at_trigger = afc_motor.current_position;
@@ -586,7 +605,7 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
   // while (!_DONE); we don't need to wait because of the 10us delay above
   global_data_A37434.a_adc_reading_internal = ADCBUF1 << 6;
   global_data_A37434.b_adc_reading_internal = ADCBUF0 << 6;
-
+  
   // Read the data from the external ADCs
     
   // Read back the "A" input ADC
@@ -617,6 +636,14 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
   global_data_A37434.time_off_counter = 0;
   global_data_A37434.sample_index = ETMCanSlaveGetPulseCount();
   global_data_A37434.sample_complete = 1;
+  PIN_TEST_POINT_A = 0;
+
+  reading_array_external[reading_array_location] = global_data_A37434.b_adc_reading_external;
+  reading_array_internal[reading_array_location] = global_data_A37434.b_adc_reading_internal;
+  reading_array_location++;
+  reading_array_location &= 0b0000001111111111;
+
+
   _INT1IF = 0;
 }
 
