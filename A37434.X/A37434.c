@@ -60,6 +60,7 @@ void InitializeA37434(void);
 void DoPostPulseProcess(void);
 void DoAFCReversePower(void);
 unsigned int ConvertToDBMiniCircuit(unsigned int adc_reading_100uV);
+unsigned int ConvertToDBRFDetector(unsigned int adc_reading_100uV);
 unsigned int CalculateDirection(unsigned int current_pos, unsigned int previous_pos, unsigned int current_rev_pwr, unsigned int previous_rev_pwr);
 void DoAFCCooldown(void);
 void DoA37434(void);
@@ -290,38 +291,31 @@ void DoPostPulseProcess(void) {
   // First - Scale and calibrate the power readings
   // Reverse Power Samples are stored in 100uV Units
   // Then convert to dB
+  // The B "input" has the reverse power
   global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
-  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_internal;
+  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_internal;
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
-  global_data_A37434.reverse_power_db = ConvertToDBMiniCircuit(global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
-  global_data_A37434.forward_power_db = ConvertToDBMiniCircuit(global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
-  
+  global_data_A37434.reverse_power_db = ConvertToDBRFDetector(global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
+  global_data_A37434.forward_power_db = ConvertToDBRFDetector(global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
 
-  ETMCanSlaveSetDebugRegister(0x0, ADCBUF1);
-  ETMCanSlaveSetDebugRegister(0x1, ADCBUF0);
-  ETMCanSlaveSetDebugRegister(0x2, global_data_A37434.a_adc_reading_internal);
-  ETMCanSlaveSetDebugRegister(0x3, global_data_A37434.b_adc_reading_internal);
-  ETMCanSlaveSetDebugRegister(0x4, global_data_A37434.a_adc_reading_external);
-  ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.b_adc_reading_external);
-  ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.reverse_power_db);
-  ETMCanSlaveSetDebugRegister(0x7, global_data_A37434.forward_power_db);
 
+  ETMCanSlaveSetDebugRegister(0x0, global_data_A37434.a_adc_reading_external);
+  ETMCanSlaveSetDebugRegister(0x1, global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
+  ETMCanSlaveSetDebugRegister(0x2, global_data_A37434.reverse_power_db);
+
+  ETMCanSlaveSetDebugRegister(0x4, global_data_A37434.a_adc_reading_internal);
+  ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
+  ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.forward_power_db);
 
 
   if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
     ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_0,
 			    global_data_A37434.sample_index,
 			    global_data_A37434.position_at_trigger,
-			    afc_motor.target_position,
-			    global_data_A37434.reverse_power_db);
-
-    // DPARKER - Figure out if we need to send this message or if the ECB will be ok with the message not being sent
-    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
-			    global_data_A37434.sample_index,
-			    0x0000,
-			    0x0000,
+			    global_data_A37434.reverse_power_db,
 			    0x0000);
+    
   }
 }
 
@@ -366,19 +360,28 @@ void DoAFCReversePower(void) {
     new_direction = MOVE_UP;
     global_data_A37434.no_decision_counter = 0;
   } else {
-    if (global_data_A37434.no_decision_counter < MAX_NO_DECISION_COUNTER) {
-      new_direction = previous_direction;  
-      global_data_A37434.no_decision_counter++;
-    } else {
-      global_data_A37434.no_decision_counter = 0;
-      if (previous_direction == MOVE_UP) {
+    if (global_data_A37434.fast_afc_done == 0) {
+      // If we reach a no decision in fast afc mode it means we could be out of range
+      // Move to the move position
+      if (global_data_A37434.position_at_trigger > afc_motor.home_position) {
 	new_direction = MOVE_DOWN;
       } else {
 	new_direction = MOVE_UP;
       }
+    } else {
+      if (global_data_A37434.no_decision_counter < MAX_NO_DECISION_COUNTER) {
+	new_direction = previous_direction;  
+	global_data_A37434.no_decision_counter++;
+      } else {
+	global_data_A37434.no_decision_counter = 0;
+	if (previous_direction == MOVE_UP) {
+	  new_direction = MOVE_DOWN;
+	} else {
+	  new_direction = MOVE_UP;
+	}
+      }
     }
   }
-  
   if (new_direction != previous_direction) {
     global_data_A37434.inversion_counter++;
   }
@@ -412,6 +415,23 @@ void DoAFCReversePower(void) {
   } else {
     afc_motor.target_position = afc_motor.current_position - target_delta;
   }
+
+
+  if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
+    
+    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
+			    global_data_A37434.sample_index,
+			    calculated_move,
+			    global_data_A37434.pulses_on_this_run,
+			    afc_motor.target_position);
+  }
+
+}
+
+unsigned int ConvertToDBRFDetector(unsigned int adc_reading_100uV) {
+  // Power = 100 Watts per mV
+  // Adc Reading = 5uV per LSB
+  return adc_reading_100uV;
 }
 
 
@@ -738,6 +758,7 @@ void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
 
     case ETM_CAN_REGISTER_AFC_CMD_SELECT_AFC_MODE:
       _STATUS_AFC_MODE_MANUAL_MODE = 0;
+      global_data_A37434.time_off_counter = LIMIT_RECORDED_OFF_TIME;  // Move us back to home position when we go back to AFC mode
       break;
 
     case ETM_CAN_REGISTER_AFC_CMD_SELECT_MANUAL_MODE:

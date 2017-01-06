@@ -196,7 +196,7 @@ typedef struct {
   AnalogInput  reverse_power_sample;
   AnalogInput  forward_power_sample;
 
-  unsigned int time_off_counter;
+  unsigned long time_off_counter;
   unsigned int inversion_counter;
   unsigned int no_decision_counter;
   unsigned int position_at_trigger;
