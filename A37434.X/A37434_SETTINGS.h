@@ -3,8 +3,12 @@
 
 
 
+
+
 #define AFC_MOTOR_MIN_POSITION                 1000
 #define AFC_MOTOR_MAX_POSITION                 34000
+
+#define AFC_CONTROL_WINDOW_RANGE               4000
 
 #define FAST_MOVE_TARGET_DELTA                 128   // 4 steps
 #define SLOW_MOVE_TARGET_DELTA                 64    // 2 steps  
@@ -25,7 +29,7 @@
 #define MINIMUM_FAST_MODE_PULSES               50
 #define MAXIMUM_FAST_MODE_PULSES               400
 #define INVERSIONS_TO_REACH_SLOW_MODE          10
-#define MAX_NO_DECISION_COUNTER                100
+#define MAX_NO_DECISION_COUNTER                4
 
 #define MINIMUM_POSITION_CHANGE                16
 #define MINIMUM_REV_PWR_CHANGE                 50      //.5 dB

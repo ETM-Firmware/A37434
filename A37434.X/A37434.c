@@ -1,14 +1,15 @@
 #include "A37434.h"
 #include "FIRMWARE_VERSION.h"
 
+
+
+void DoAFCReversePowerFast(void);
+void DoAFCReversePowerSlow(void);
+
 // This is the firmware for the AFC BOARD
 
 
 //#define __USE_AFT_MODULE
-
-unsigned int reading_array_internal[1024];
-unsigned int reading_array_external[1024];
-unsigned int reading_array_location = 0;
 
 
 // ------------------ PROCESSOR CONFIGURATION ------------------------//
@@ -59,9 +60,12 @@ void DoStateMachine(void);
 void InitializeA37434(void);
 void DoPostPulseProcess(void);
 void DoAFCReversePower(void);
+void DoAFCMark2(void);
+
 unsigned int ConvertToDBMiniCircuit(unsigned int adc_reading_100uV);
 unsigned int ConvertToDBRFDetector(unsigned int adc_reading_100uV);
 unsigned int CalculateDirection(unsigned int current_pos, unsigned int previous_pos, unsigned int current_rev_pwr, unsigned int previous_rev_pwr);
+void ClearPowerReadings(void);
 void DoAFCCooldown(void);
 void DoA37434(void);
 void UpdateFaults(void);
@@ -127,7 +131,7 @@ void DoStateMachine(void) {
       global_data_A37434.manual_target_position = afc_motor.target_position;
       if (global_data_A37434.sample_complete) {
 	DoPostPulseProcess();
-	DoAFCReversePower();
+	DoAFCReversePowerCombined();
       }
 
       if (_STATUS_AFC_MODE_MANUAL_MODE) {
@@ -320,6 +324,218 @@ void DoPostPulseProcess(void) {
 }
 
 
+unsigned int reverse_power[1024];
+
+void DoAFCMark2(void) {
+  /* 
+     This strategy is a bit more complex
+     
+     Create a filtered reading of the reverse power at each position.
+     
+     This is stored as a position realive to home position
+     reverse_power[511] = reverse power at home position
+     reverse_power[510] = 1/4 step below home position
+     reverse_power[512] = 1/4 step above home position
+
+
+
+
+  */
+
+
+
+
+}
+
+
+
+unsigned long sample_sum = 0;
+unsigned long previous_sample_sum = 0;
+unsigned int sample_count = 0;
+unsigned int direction_previous = MOVE_DOWN;
+#define MOVE_SIZE_BIG          64
+#define MOVE_SIZE_SMALL        32
+#define SAMPLES_AT_EACH_POINT  32
+
+
+
+
+
+void DoAFCReversePowerSlow(void) {
+  /* 
+     This strategy is simple
+     
+     Sit at a point for 10 samples
+     Then move up or down 1/2 Step
+     Then sample for 16 more.  Compare and see if it got better or worse
+  */
+  
+  unsigned int new_direction;
+  unsigned int sample_sum_save = 0;
+  unsigned int move_amount;
+
+  sample_sum += global_data_A37434.reverse_power_db;
+  sample_count++;
+  
+  if (sample_count >= SAMPLES_AT_EACH_POINT) {
+    if (sample_sum < previous_sample_sum) {
+      new_direction = direction_previous;
+      move_amount = MOVE_SIZE_BIG;
+    } else {
+      move_amount = MOVE_SIZE_SMALL;
+      if (direction_previous == MOVE_DOWN) {
+	new_direction = MOVE_UP;
+      } else {
+	new_direction = MOVE_DOWN;
+      }
+    }
+    
+    if (new_direction == MOVE_UP) {
+      afc_motor.target_position = afc_motor.target_position + move_amount; 
+    } else {
+      afc_motor.target_position = afc_motor.target_position - move_amount;
+    }
+    previous_sample_sum = sample_sum;
+    direction_previous = new_direction;
+    sample_count = 0;
+    sample_sum /= SAMPLES_AT_EACH_POINT;
+    sample_sum_save = sample_sum;
+    sample_sum = 0;
+  }
+  
+  if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
+    
+    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
+			    global_data_A37434.sample_index,
+			    sample_sum_save,
+			    global_data_A37434.pulses_on_this_run,
+			    afc_motor.target_position);
+  }
+  
+
+}
+
+void DoAFCReversePowerCombined(void) {
+  PR1 = PR1_FAST_SETTING; // Force the motor speed to fast
+  if (global_data_A37434.fast_afc_done == 1) {
+    DoAFCReversePowerSlow();
+  } else {
+    DoAFCReversePowerFast();
+    
+    // Figure out if it's time to switch to slow mode
+    if (global_data_A37434.pulses_on_this_run >= MAXIMUM_FAST_MODE_PULSES) {
+      global_data_A37434.fast_afc_done = 1;
+    }
+    if ((global_data_A37434.pulses_on_this_run >= MINIMUM_FAST_MODE_PULSES) && (global_data_A37434.inversion_counter >= INVERSIONS_TO_REACH_SLOW_MODE)) {
+      global_data_A37434.fast_afc_done = 1;
+    }
+  }    
+  
+}
+
+
+void DoAFCReversePowerFast(void) {
+  unsigned int relative_index;
+  unsigned int calculated_move;
+  unsigned int previous_direction;
+  unsigned int new_direction;
+  unsigned int target_delta;
+  unsigned int n;
+
+  if (global_data_A37434.position_at_trigger > power_readings.position[power_readings.active_index]) {
+    previous_direction = MOVE_UP;
+  } else {
+    previous_direction = MOVE_DOWN;
+  }
+  
+  power_readings.active_index++;
+  power_readings.active_index &= 0x000F;
+  
+  power_readings.reverse_power[power_readings.active_index] = global_data_A37434.reverse_power_db;
+  power_readings.forward_power[power_readings.active_index] = global_data_A37434.forward_power_db;
+  power_readings.position[power_readings.active_index]      = global_data_A37434.position_at_trigger;
+
+
+  relative_index = power_readings.active_index;
+  calculated_move = 0;
+  for (n=0; n<15; n++) {
+    // Need to compare the current data with the 15 prevoius samples
+    relative_index = ((relative_index - 1) & 0x000F);
+    calculated_move += CalculateDirection(global_data_A37434.position_at_trigger,
+					  power_readings.position[relative_index],
+					  global_data_A37434.reverse_power_db,
+					  power_readings.reverse_power[relative_index]);
+  }
+  
+  if (calculated_move > 15) {
+    new_direction = MOVE_DOWN;
+    global_data_A37434.no_decision_counter = 0;
+  } else if (calculated_move < 15) {
+    new_direction = MOVE_UP;
+    global_data_A37434.no_decision_counter = 0;
+  } else {
+    if (global_data_A37434.fast_afc_done == 0) {
+      // If we reach a no decision in fast afc mode it means we could be out of range
+      // Move to the move position
+      if (global_data_A37434.position_at_trigger > afc_motor.home_position) {
+	new_direction = MOVE_DOWN;
+      } else {
+	new_direction = MOVE_UP;
+      }
+    } else {
+      if (global_data_A37434.no_decision_counter < MAX_NO_DECISION_COUNTER) {
+	new_direction = previous_direction;  
+	global_data_A37434.no_decision_counter++;
+      } else {
+	global_data_A37434.no_decision_counter = 0;
+	if (previous_direction == MOVE_UP) {
+	  new_direction = MOVE_DOWN;
+	} else {
+	  new_direction = MOVE_UP;
+	}
+      }
+    }
+  }
+  if (new_direction != previous_direction) {
+    global_data_A37434.inversion_counter++;
+  }
+
+  // Override the direction calculation if the motor is very far from the home position
+
+  if (global_data_A37434.position_at_trigger > afc_motor.home_position + AFC_CONTROL_WINDOW_RANGE) {
+    new_direction = MOVE_DOWN;
+    ClearPowerReadings();
+  }
+
+  if (global_data_A37434.position_at_trigger < afc_motor.home_position - AFC_CONTROL_WINDOW_RANGE) {
+    new_direction = MOVE_UP;
+    ClearPowerReadings();
+  }
+
+
+  // We know what direction we are going to move next.
+  // Figure out how far and how fast we are going to move
+
+  if (new_direction == MOVE_UP) {
+    afc_motor.target_position = afc_motor.current_position + FAST_MOVE_TARGET_DELTA; 
+  } else {
+    afc_motor.target_position = afc_motor.current_position - SLOW_MOVE_TARGET_DELTA;
+  }
+
+
+  if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
+    
+    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
+			    global_data_A37434.sample_index,
+			    calculated_move,
+			    global_data_A37434.pulses_on_this_run,
+			    afc_motor.target_position);
+  }
+
+}
+
+
+
 void DoAFCReversePower(void) {
   unsigned int relative_index;
   unsigned int calculated_move;
@@ -385,6 +601,19 @@ void DoAFCReversePower(void) {
   if (new_direction != previous_direction) {
     global_data_A37434.inversion_counter++;
   }
+
+  // Override the direction calculation if the motor is very far from the home position
+
+  if (global_data_A37434.position_at_trigger > afc_motor.home_position + AFC_CONTROL_WINDOW_RANGE) {
+    new_direction = MOVE_DOWN;
+    ClearPowerReadings();
+  }
+
+  if (global_data_A37434.position_at_trigger < afc_motor.home_position - AFC_CONTROL_WINDOW_RANGE) {
+    new_direction = MOVE_UP;
+    ClearPowerReadings();
+  }
+
 
   // We know what direction we are going to move next.
   // Figure out how far and how fast we are going to move
@@ -452,6 +681,16 @@ unsigned int ConvertToDBMiniCircuit(unsigned int adc_reading_100uV) {
   return value;
 }
 
+
+void ClearPowerReadings(void) {
+  unsigned int n;
+  for (n=0; n<15; n++) {
+    power_readings.reverse_power[n] = 0;
+    power_readings.forward_power[n] = 0;
+    power_readings.position[n] = 0;
+  }
+  power_readings.active_index = 0;
+}
 
 
 unsigned int CalculateDirection(unsigned int current_pos, unsigned int previous_pos, unsigned int current_rev_pwr, unsigned int previous_rev_pwr) {
@@ -657,12 +896,6 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
   global_data_A37434.sample_index = ETMCanSlaveGetPulseCount();
   global_data_A37434.sample_complete = 1;
   PIN_TEST_POINT_A = 0;
-
-  reading_array_external[reading_array_location] = global_data_A37434.b_adc_reading_external;
-  reading_array_internal[reading_array_location] = global_data_A37434.b_adc_reading_internal;
-  reading_array_location++;
-  reading_array_location &= 0b0000001111111111;
-
 
   _INT1IF = 0;
 }
