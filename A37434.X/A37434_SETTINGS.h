@@ -26,8 +26,8 @@
 #define MIN_ADC_READING_100_UV                 5000
 
 
-#define MINIMUM_FAST_MODE_PULSES               50
-#define MAXIMUM_FAST_MODE_PULSES               400
+#define MINIMUM_FAST_MODE_PULSES               100
+#define MAXIMUM_FAST_MODE_PULSES               4000
 #define INVERSIONS_TO_REACH_SLOW_MODE          10
 #define MAX_NO_DECISION_COUNTER                4
 

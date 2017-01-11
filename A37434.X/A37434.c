@@ -5,7 +5,7 @@
 
 void DoAFCReversePowerFast(void);
 void DoAFCReversePowerSlow(void);
-
+void DoAFCReversePowerCombined(void);
 // This is the firmware for the AFC BOARD
 
 
@@ -411,9 +411,13 @@ void DoAFCReversePowerSlow(void) {
 			    global_data_A37434.pulses_on_this_run,
 			    afc_motor.target_position);
   }
-  
-
 }
+
+
+unsigned int fast_rev_power_avg;
+unsigned int slow_rev_power_avg;
+
+#define MAX_REV_POWER_ERROR_FOR_SLOW_MODE  200
 
 void DoAFCReversePowerCombined(void) {
   PR1 = PR1_FAST_SETTING; // Force the motor speed to fast
@@ -421,16 +425,28 @@ void DoAFCReversePowerCombined(void) {
     DoAFCReversePowerSlow();
   } else {
     DoAFCReversePowerFast();
-    
+
     // Figure out if it's time to switch to slow mode
+
     if (global_data_A37434.pulses_on_this_run >= MAXIMUM_FAST_MODE_PULSES) {
       global_data_A37434.fast_afc_done = 1;
     }
-    if ((global_data_A37434.pulses_on_this_run >= MINIMUM_FAST_MODE_PULSES) && (global_data_A37434.inversion_counter >= INVERSIONS_TO_REACH_SLOW_MODE)) {
-      global_data_A37434.fast_afc_done = 1;
+    
+    if (global_data_A37434.pulses_on_this_run < 10) {
+      fast_rev_power_avg = global_data_A37434.reverse_power_db;
+      slow_rev_power_avg = global_data_A37434.reverse_power_db;
+    } else {
+      fast_rev_power_avg = RCFilterNTau(fast_rev_power_avg, global_data_A37434.reverse_power_db, RC_FILTER_8_TAU);
+      slow_rev_power_avg = RCFilterNTau(slow_rev_power_avg, global_data_A37434.reverse_power_db, RC_FILTER_32_TAU);
+    }
+    
+    if (global_data_A37434.pulses_on_this_run > MINIMUM_FAST_MODE_PULSES) {
+      if ((fast_rev_power_avg > (slow_rev_power_avg - MAX_REV_POWER_ERROR_FOR_SLOW_MODE)) && 
+	  (fast_rev_power_avg < (slow_rev_power_avg + MAX_REV_POWER_ERROR_FOR_SLOW_MODE))) {
+	global_data_A37434.fast_afc_done = 1;
+      }
     }
   }    
-  
 }
 
 
@@ -439,7 +455,6 @@ void DoAFCReversePowerFast(void) {
   unsigned int calculated_move;
   unsigned int previous_direction;
   unsigned int new_direction;
-  unsigned int target_delta;
   unsigned int n;
 
   if (global_data_A37434.position_at_trigger > power_readings.position[power_readings.active_index]) {
