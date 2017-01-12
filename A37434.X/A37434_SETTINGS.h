@@ -30,16 +30,8 @@
 
 
 // Fast to Slow mode switch configuration
-#define MINIMUM_FAST_MODE_PULSES               100
-#define MAXIMUM_FAST_MODE_PULSES               4000
-
-#define MAX_REV_POWER_ERROR_FOR_SLOW_MODE_10K_PLUS 200
-#define MAX_REV_POWER_ERROR_FOR_SLOW_MODE_7K_10K   160
-#define MAX_REV_POWER_ERROR_FOR_SLOW_MODE_7K_MINUS 100
-
-
-
-
+#define MAXIMUM_FAST_MODE_PULSES               400
+#define MAXIMUM_FAST_MODE_TIME                 80     // 800 milliseconds
 
 
 // Minicircuit Conversion Configuration

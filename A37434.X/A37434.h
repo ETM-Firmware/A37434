@@ -176,6 +176,7 @@ typedef struct {
 
   unsigned int fast_afc_done;                    // Status bit to indicate that AFC has switched to "slow" tracking mode
   unsigned int pulses_on_this_run;               // Number of pulses for this run
+  unsigned int time_on_this_run;                 // used to exit fast afc mode
 
   // Forward and reverse power
   unsigned int a_adc_reading_internal;

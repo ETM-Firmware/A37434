@@ -358,36 +358,14 @@ void DoAFCReversePower(void) {
 
 
 unsigned int CheckForAFCFastDone(void) {
-  unsigned int max_error_switch_point;
-
-  if (global_data_A37434.reverse_power_db < 7000) {
-    max_error_switch_point = MAX_REV_POWER_ERROR_FOR_SLOW_MODE_7K_MINUS;
-  } else if (global_data_A37434.reverse_power_db < 10000) {
-    max_error_switch_point = MAX_REV_POWER_ERROR_FOR_SLOW_MODE_7K_10K;
-  } else {
-    max_error_switch_point = MAX_REV_POWER_ERROR_FOR_SLOW_MODE_10K_PLUS;
-  }
-
-
   if (global_data_A37434.pulses_on_this_run >= MAXIMUM_FAST_MODE_PULSES) {
     return 1;
   }
   
-  if (global_data_A37434.pulses_on_this_run < 10) {
-    power_readings.rev_power_average_8_tau = global_data_A37434.reverse_power_db;
-    power_readings.rev_power_average_32_tau = global_data_A37434.reverse_power_db;
-  } else {
-    power_readings.rev_power_average_8_tau = RCFilterNTau(power_readings.rev_power_average_8_tau, global_data_A37434.reverse_power_db, RC_FILTER_8_TAU);
-    power_readings.rev_power_average_32_tau = RCFilterNTau(power_readings.rev_power_average_32_tau, global_data_A37434.reverse_power_db, RC_FILTER_32_TAU);
+  if (global_data_A37434.time_on_this_run >= MAXIMUM_FAST_MODE_TIME) {
+    return 1;
   }
-  
-  if (global_data_A37434.pulses_on_this_run > MINIMUM_FAST_MODE_PULSES) {
-    if ((power_readings.rev_power_average_8_tau > (power_readings.rev_power_average_32_tau - max_error_switch_point)) && 
-	(power_readings.rev_power_average_8_tau < (power_readings.rev_power_average_32_tau + max_error_switch_point))) {
-      // DPARKER add check for withing control range +/- N of home position somewher or perhaps only run this when we have 
-      return 1;
-    }
-  }
+
   return 0;
 }
 
@@ -658,6 +636,10 @@ void DoA37434(void) {
     
     UpdateFaults();
 
+
+    
+
+
     // Update the "Hot Position" - This is where the motor ended when we stopped pulsing
     if (global_data_A37434.fast_afc_done == 1) {
       global_data_A37434.afc_hot_position = afc_motor.current_position;
@@ -671,11 +653,16 @@ void DoA37434(void) {
     if (global_data_A37434.time_off_counter >= NO_PULSE_TIME_TO_INITITATE_COOLDOWN) {
       global_data_A37434.fast_afc_done = 0;
       global_data_A37434.pulses_on_this_run = 0;
+      global_data_A37434.time_on_this_run = 0;
       // Do not perform the cooldown in manual mode
       if (global_data_A37434.control_state == STATE_RUN_AFC) {
-	DoAFCCooldown();	
+	// DoAFCCooldown();	
+	// Removed the AFC - Just go back to home position
+	afc_motor.target_position = afc_motor.home_position;
       }  
     }
+
+    global_data_A37434.time_on_this_run++;
     
     /*
     ETMCanSlaveSetDebugRegister(0x0, ADCBUF1);
