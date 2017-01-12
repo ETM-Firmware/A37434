@@ -19,9 +19,9 @@
 #define MAX_NO_DECISION_COUNTER                4
 #define MINIMUM_POSITION_CHANGE                16
 
-#define MINIMUM_REV_PWR_CHANGE_10K_PLUS        50
-#define MINIMUM_REV_PWR_CHANGE_7K_10K          40
-#define MINIMUM_REV_PWR_CHANGE_7K_MINUS        25                  
+#define MINIMUM_REV_PWR_CHANGE_10K_PLUS        4//50
+#define MINIMUM_REV_PWR_CHANGE_7K_10K          3//40
+#define MINIMUM_REV_PWR_CHANGE_7K_MINUS        2//25                  
 
 // Slow Mode Movement Configuaration
 #define MOVE_SIZE_BIG          64

@@ -1,12 +1,7 @@
 #include "A37434.h"
 #include "FIRMWARE_VERSION.h"
 
-
-
 // This is the firmware for the AFC BOARD
-
-
-//#define __USE_AFT_MODULE
 
 
 // ------------------ PROCESSOR CONFIGURATION ------------------------//
@@ -45,13 +40,9 @@ const unsigned int CoolDownTable[256]     = {COOL_DOWN_TABLE_VALUES};
   https://docs.google.com/spreadsheets/d/1pyvkoiT0XYzaxereZ0c7XMhMmgaBmKexELuavmLmR8k/
 */
 
-MCP4725 U13_MCP4725;                     // This is the external DAC
-
 TYPE_POWER_READINGS power_readings;      // This stores the history of the position and power readings for the previous 16 pulses 
 STEPPER_MOTOR afc_motor;                 // This contains the control data for the motor
 AFCControlData global_data_A37434;       // Global variables
-
-
 
 
 
@@ -117,7 +108,6 @@ void DoStateMachine(void) {
     break;
 
   case STATE_AUTO_HOME:
-    //global_data_A37434.aft_control_voltage.enabled = 1;
     afc_motor.min_position = AFC_MOTOR_MIN_POSITION;
     afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.target_position = afc_motor.home_position;
@@ -173,9 +163,8 @@ void DoStateMachine(void) {
 
 
 void InitializeA37434(void) {
-  unsigned char aft_control_voltage_cal;
-  unsigned char aft_a_sample_cal;
-  unsigned char aft_b_sample_cal;
+  unsigned char a_sample_cal;
+  unsigned char b_sample_cal;
   
   TRISA = A37434_TRISA_VALUE;
   TRISB = A37434_TRISB_VALUE;
@@ -239,38 +228,23 @@ void InitializeA37434(void) {
   ETMEEPromUseExternal();
   ETMEEPromConfigureExternalDevice(EEPROM_SIZE_8K_BYTES, FCY_CLK, ETM_I2C_400K_BAUD, EEPROM_I2C_ADDRESS_0, I2C_PORT_1);
 
-  // Initialize the I2C DAC
-  SetupMCP4725(&U13_MCP4725, I2C_PORT_1, MCP4725_ADDRESS_A0_0, FCY_CLK, ETM_I2C_400K_BAUD);
-  
   // Initialize the SPI Module
   ConfigureSPI(ETM_SPI_PORT_2, ETM_DEFAULT_SPI_CON_VALUE, ETM_DEFAULT_SPI_CON2_VALUE, ETM_DEFAULT_SPI_STAT_VALUE, SPI_CLK_2_MBIT, FCY_CLK);
   
   if (ETMEEPromCheckOK() == 0) {
     // The eeprom is not working
     // Do not load calibration data from the EEPROM
-    aft_control_voltage_cal = ANALOG_OUTPUT_NO_CALIBRATION;
-    aft_a_sample_cal        = ANALOG_INPUT_NO_CALIBRATION;
-    aft_b_sample_cal        = ANALOG_INPUT_NO_CALIBRATION;
+    a_sample_cal        = ANALOG_INPUT_NO_CALIBRATION;
+    b_sample_cal        = ANALOG_INPUT_NO_CALIBRATION;
   } else {
-    aft_control_voltage_cal = ANALOG_OUTPUT_0;
-    aft_a_sample_cal        = ANALOG_INPUT_3;
-    aft_b_sample_cal        = ANALOG_INPUT_4;
+    a_sample_cal        = ANALOG_INPUT_3;
+    b_sample_cal        = ANALOG_INPUT_4;
   }
-
-#ifdef __USE_AFT_MODULE
-  ETMAnalogInitializeOutput(&global_data_A37434.aft_control_voltage,
-			    MACRO_DEC_TO_SCALE_FACTOR_16(3.98799),
-			    OFFSET_ZERO,
-			    aft_control_voltage_cal,
-			    AFT_CONTROL_VOLTAGE_MAX_PROGRAM,
-			    AFT_CONTROL_VOLTAGE_MIN_PROGRAM,
-			    0);
-#endif
 
   ETMAnalogInitializeInput(&global_data_A37434.reverse_power_sample,
 			   MACRO_DEC_TO_SCALE_FACTOR_16(.6250),
 			   OFFSET_ZERO,
-			   aft_a_sample_cal,
+			   a_sample_cal,
 			   NO_OVER_TRIP,
 			   NO_UNDER_TRIP,
 			   NO_TRIP_SCALE,
@@ -281,7 +255,7 @@ void InitializeA37434(void) {
   ETMAnalogInitializeInput(&global_data_A37434.forward_power_sample,
 			   MACRO_DEC_TO_SCALE_FACTOR_16(.6250),
 			   OFFSET_ZERO,
-			   aft_b_sample_cal,
+			   b_sample_cal,
 			   NO_OVER_TRIP,
 			   NO_UNDER_TRIP,
 			   NO_TRIP_SCALE,
@@ -312,10 +286,12 @@ void DoPostPulseProcess(void) {
   // Then convert to dB
   // The B "input" has the reverse power
   global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
-  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_internal;
-  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
   global_data_A37434.reverse_power_db = ConvertToDBRFDetector(global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
+
+  // DPARKER - THIS "FORWARD POWER" Section is just for evaluating the internal ADC readings
+  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_internal;
+  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
   global_data_A37434.forward_power_db = ConvertToDBRFDetector(global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
 
 
@@ -329,11 +305,21 @@ void DoPostPulseProcess(void) {
 
 
   if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
-    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_0,
+    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
 			    global_data_A37434.sample_index,
 			    global_data_A37434.position_at_trigger,
 			    global_data_A37434.reverse_power_db,
+			    global_data_A37434.forward_power_db);
+
+
+    // This log register is unused at this time
+    /*
+    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_0,
+			    global_data_A37434.sample_index,
+			    calculated_move,
+			    global_data_A37434.pulses_on_this_run,
 			    0x0000);
+    */
     
   }
 }
@@ -411,17 +397,6 @@ void DoAFCReversePowerSlow(void) {
     power_readings.reading_count = 0;
     power_readings.reading_accumulator = 0;
   }
-  /*
-  if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
-    
-    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
-			    global_data_A37434.sample_index,
-			    sample_sum_save,
-			    global_data_A37434.pulses_on_this_run,
-			    afc_motor.target_position);
-
-  }
-  */
 }
 
 
@@ -500,17 +475,6 @@ void DoAFCReversePowerFast(void) {
   } else {
     afc_motor.target_position = afc_motor.current_position - FAST_MOVE_TARGET_DELTA;
   }
-
-
-  if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
-    
-    ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
-			    global_data_A37434.sample_index,
-			    calculated_move,
-			    global_data_A37434.pulses_on_this_run,
-			    afc_motor.target_position);
-  }
-
 }
 
 
@@ -626,18 +590,9 @@ void DoA37434(void) {
     slave_board_data.log_data[0] = 0;
     slave_board_data.log_data[1] = afc_motor.target_position;
     slave_board_data.log_data[2] = afc_motor.current_position;
-    
-    //slave_board_data.log_data[4] = global_data_A37434.aft_filtered_error_for_client;
-    //slave_board_data.log_data[5] = global_data_A37434.aft_B_sample_filtered;
-    //slave_board_data.log_data[6] = global_data_A37434.aft_A_sample_filtered;
-    
-    //slave_board_data.log_data[8] = global_data_A37434.aft_control_voltage.set_point;
     slave_board_data.log_data[11] = afc_motor.home_position;
     
     UpdateFaults();
-
-
-    
 
 
     // Update the "Hot Position" - This is where the motor ended when we stopped pulsing
@@ -656,9 +611,9 @@ void DoA37434(void) {
       global_data_A37434.time_on_this_run = 0;
       // Do not perform the cooldown in manual mode
       if (global_data_A37434.control_state == STATE_RUN_AFC) {
-	// DoAFCCooldown();	
+	DoAFCCooldown();	
 	// Removed the AFC - Just go back to home position
-	afc_motor.target_position = afc_motor.home_position;
+	//afc_motor.target_position = afc_motor.home_position;
       }  
     }
 
@@ -678,21 +633,6 @@ void DoA37434(void) {
     ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.aft_A_sample_filtered);
     ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.aft_B_sample_filtered);
     */
-    
-#ifdef __USE_AFT_MODULE
-    // update the AFT control voltage
-    // DPARKER consider timing this with Magnetron pulses
-    /*    
-    if (ETMCanSlaveIsNextPulseLevelHigh()) {
-      ETMAnalogSetOutput(&global_data_A37434.aft_control_voltage, global_data_A37434.aft_control_voltage_high_energy);
-    } else {
-      ETMAnalogSetOutput(&global_data_A37434.aft_control_voltage, global_data_A37434.aft_control_voltage_low_energy);
-    }
-    ETMAnalogScaleCalibrateDACSetting(&global_data_A37434.aft_control_voltage);
-    WriteLTC265X(&U23_LTC2654, LTC265X_WRITE_AND_UPDATE_DAC_A, global_data_A37434.aft_control_voltage.dac_setting_scaled_and_calibrated);
-    */
-#endif
-
   }
 }
 
@@ -855,10 +795,6 @@ void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
       */
     case ETM_CAN_REGISTER_AFC_SET_1_HOME_POSITION_AND_OFFSET:
       afc_motor.home_position = message_ptr->word0;
-      /*
-      global_data_A37434.aft_control_voltage_low_energy = message_ptr->word1;
-      global_data_A37434.aft_control_voltage_high_energy = message_ptr->word2;
-      */
       _CONTROL_NOT_CONFIGURED = 0;
       break;
 
