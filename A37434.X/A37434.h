@@ -169,47 +169,31 @@
 
 
 typedef struct {
-  //int          frequency_error_filtered;
-  //unsigned long pulse_off_counter;
-  //AnalogOutput aft_control_voltage;
-  //unsigned int aft_A_sample_filtered;
-  //unsigned int aft_B_sample_filtered;
-  //unsigned int sample_index;
-  //unsigned int aft_A_sample_history[16];
-  //unsigned int aft_B_sample_history[16];
-  //unsigned int aft_filtered_error_for_client;
+  unsigned int sample_index;                     // this is the pulse number from the Pulse Sync board used for indexing fast log
+  unsigned int control_state;                    // 
+  unsigned int manual_target_position;           // 
+  unsigned int sample_complete;                  // Status bit to indicate that INT1 Interrupt has completed
 
-  //unsigned int aft_control_voltage_low_energy;
-  //unsigned int aft_control_voltage_high_energy;
+  unsigned int fast_afc_done;                    // Status bit to indicate that AFC has switched to "slow" tracking mode
+  unsigned int pulses_on_this_run;               // Number of pulses for this run
 
-  unsigned int sample_index;
-
-
-  unsigned int control_state;
-  unsigned int manual_target_position;
-  unsigned int sample_complete;
-
-  unsigned int fast_afc_done;
-  unsigned int pulses_on_this_run;
-  unsigned int afc_hot_position;
-
-  AnalogInput  reverse_power_sample;
-  AnalogInput  forward_power_sample;
-
-  unsigned long time_off_counter;
-  unsigned int inversion_counter;
-  unsigned int no_decision_counter;
-  unsigned int position_at_trigger;
-
+  // Forward and reverse power
   unsigned int a_adc_reading_internal;
   unsigned int b_adc_reading_internal;
-
   unsigned int a_adc_reading_external;
   unsigned int b_adc_reading_external;
+  AnalogInput  reverse_power_sample;             // This is the reverse power data
+  AnalogInput  forward_power_sample;             // Unused at this time - for development, the internal adc reading is stored here
+  unsigned int reverse_power_db;                 // Without Miniciruit detector this is not in dB, it is just an scalar
+  unsigned int forward_power_db;                 // Without Miniciruit detector this is not in dB, it is just an scalar
 
-  unsigned int reverse_power_db;
-  unsigned int forward_power_db;
+  // Cooldown Variables
+  unsigned int afc_hot_position;                 // This is part of the cooldown algorithm
+  unsigned long time_off_counter;                // This is used to count how long the linac has been not pulsing.  Part of cooldown
 
+  // Fast AFC Variables
+  unsigned int no_decision_counter;              // This counts how many consecutive samples the AFC has been unable to figure out if it should go up or down
+  unsigned int position_at_trigger;
 
 } AFCControlData;
 
@@ -245,10 +229,20 @@ typedef struct {
 
 
 typedef struct {
+  // Fast AFC Storage
   unsigned int position[16];
   unsigned int reverse_power[16];
   unsigned int forward_power[16];
   unsigned int active_index;
+
+  // Slow AFC Storage
+  unsigned long reading_accumulator;
+  unsigned long previous_position_reading_accumulator;
+  unsigned int  reading_count;
+  unsigned int  current_movement_direction;
+  unsigned int  rev_power_average_32_tau;
+  unsigned int  rev_power_average_8_tau;
+
 } TYPE_POWER_READINGS;
 
 
