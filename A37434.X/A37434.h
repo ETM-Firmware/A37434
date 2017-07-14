@@ -245,8 +245,11 @@ typedef struct {
   // Slow AFC Storage
   unsigned long reading_accumulator;
   unsigned long previous_position_reading_accumulator;
+  unsigned long forward_reading_accumulator;
+  unsigned long previous_forward_reading_accumulator;
   unsigned int  reading_count;
   unsigned int  current_movement_direction;
+  unsigned int  previous_position;
 } TYPE_POWER_READINGS;
 
 

@@ -1,6 +1,9 @@
 #include "A37434.h"
 #include "FIRMWARE_VERSION.h"
 
+
+unsigned int ETMMath16Delta(unsigned int value_1, unsigned int value_2);
+
 // DPARKER Complte adding 5V and 24V monitoring
 // Need to switch the ADC between external and internal triggering
 
@@ -371,10 +374,36 @@ void DoAFCReversePowerSlow(void) {
   unsigned int next_direction;
   unsigned int move_amount;
 
+  unsigned int current_position;
+  unsigned int position_adjustment;
+
+  /*
+    A positive change in direction of 64 steps (big move size) will result in a natural decrease in reverse power of 40.  This is irreguardless of tuning
+  */
+  
+#define NDT_LINAC_FWD_POWER_POSITION_SCALE_FACTOR .625
+
   power_readings.reading_accumulator += global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
   power_readings.reading_count++;
   
   if (power_readings.reading_count >= SAMPLES_AT_EACH_POINT) {
+    // adjust for position change
+
+      position_adjustment = ETMMath16Delta(power_readings.previous_position, current_position);
+      ETMCanSlaveSetDebugRegister(0x5, position_adjustment);
+      position_adjustment = ETMScaleFactor2(position_adjustment, MACRO_DEC_TO_CAL_FACTOR_2(NDT_LINAC_FWD_POWER_POSITION_SCALE_FACTOR), 0);
+      ETMCanSlaveSetDebugRegister(0x6, position_adjustment);
+      position_adjustment *= SAMPLES_AT_EACH_POINT;
+      ETMCanSlaveSetDebugRegister(0x7, position_adjustment);
+      
+      /*
+      if (current_position > power_readings.previous_position) {
+      power_readings.previous_position_reading_accumulator -= position_adjustment;
+      } else {
+      power_readings.previous_position_reading_accumulator += position_adjustment;
+      }
+      */
+
     if (power_readings.reading_accumulator < power_readings.previous_position_reading_accumulator) {
       next_direction = power_readings.current_movement_direction;
       move_amount = MOVE_SIZE_BIG;
@@ -397,6 +426,12 @@ void DoAFCReversePowerSlow(void) {
     power_readings.current_movement_direction = next_direction;
     power_readings.reading_count = 0;
     power_readings.reading_accumulator = 0;
+
+    //power_readings.previous_forward_reading_accumulator = power_readings.forward_reading_accumulator;
+    //power_readings.forward_reading_accumulator = 0;
+    power_readings.previous_position = current_position;
+    
+
   }
 }
 
@@ -832,5 +867,10 @@ void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
     }
 }
 
-
-
+unsigned int ETMMath16Delta(unsigned int value_1, unsigned int value_2) {
+  if (value_1 > value_2) {
+    return (value_1 - value_2);
+  } else {
+    return (value_2 - value_1);
+  }
+}
