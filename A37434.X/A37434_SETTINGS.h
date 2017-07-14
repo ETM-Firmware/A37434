@@ -4,8 +4,7 @@
 // Motor Configuration
 #define AFC_MOTOR_MIN_POSITION                 1000
 #define AFC_MOTOR_MAX_POSITION                 34000
-#define MOTOR_SPEED_FAST                       200   // Motor Speed in Full Steps per Second in "Fast Mode"
-#define MOTOR_SPEED_SLOW                       200   // Motor Speed in Full Steps per Second in "Slow Mode"
+#define MOTOR_SPEED                            200   // Motor Speed in Full Steps per Second
 
 
 // Cooldown Configuration
@@ -14,14 +13,14 @@
 
 
 // Fast Mode Movement Configuration
-#define AFC_CONTROL_WINDOW_RANGE               4000
+#define AFC_CONTROL_WINDOW_RANGE               4000  // IF the Motor is more than this far away from the home position, it will just move to home position instead
 #define FAST_MOVE_TARGET_DELTA                 64    // 2 steps
 #define MAX_NO_DECISION_COUNTER                4
 #define MINIMUM_POSITION_CHANGE                16
 
-#define MINIMUM_REV_PWR_CHANGE_10K_PLUS        4//50
-#define MINIMUM_REV_PWR_CHANGE_7K_10K          3//40
-#define MINIMUM_REV_PWR_CHANGE_7K_MINUS        2//25                  
+#define MINIMUM_REV_PWR_CHANGE_16K_PLUS         7    
+#define MINIMUM_REV_PWR_CHANGE_11K_16K          5    
+#define MINIMUM_REV_PWR_CHANGE_11K_MINUS        3
 
 // Slow Mode Movement Configuaration
 #define MOVE_SIZE_BIG          64
@@ -32,12 +31,6 @@
 // Fast to Slow mode switch configuration
 #define MAXIMUM_FAST_MODE_PULSES               400
 #define MAXIMUM_FAST_MODE_TIME                 80     // 800 milliseconds
-
-
-// Minicircuit Conversion Configuration
-#define MAX_ADC_READING_100_UV                 21000
-#define MIN_ADC_READING_100_UV                 5000
-
 
 
 #endif

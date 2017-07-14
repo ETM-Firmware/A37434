@@ -14,8 +14,7 @@
 #include "P1395_CAN_SLAVE.h"
 #include "ETM.h"
 #include "A37434_SETTINGS.h"
-#include "MCP4725.h"
-
+#include "ETM_MATH.h"
 
 
 
@@ -103,7 +102,6 @@
 
 // ---------------- Motor Configuration Values ------------- //
 #define MOTOR_PWM_FREQ                    20000        // Motor Drive Frequency is 10KHz
-#define FCY_CLK                           10000000      // 10 MHz
 #define DELAY_SWITCH_TO_LOW_POWER_MODE    200
 
 
@@ -111,8 +109,7 @@
 // With 1:8 prescale the minimum 1/32 step time is 52ms or a minimum speed of .6 Steps/second
 
 #define T1CON_SETTING     (T1_ON & T1_IDLE_CON & T1_GATE_OFF & T1_PS_1_8 & T1_SYNC_EXT_OFF & T1_SOURCE_INT)
-#define PR1_FAST_SETTING  (unsigned int)(FCY_CLK / 32 / 8 / MOTOR_SPEED_FAST)
-#define PR1_SLOW_SETTING  (unsigned int)(FCY_CLK / 32 / 8 / MOTOR_SPEED_SLOW)
+#define PR1_SETTING  (unsigned int)(FCY_CLK / 32 / 8 / MOTOR_SPEED)
 
 
 /* 
@@ -152,20 +149,26 @@
 
 /*
   ADC is configured as following
-  CHN0 - AN4(B Input), Vref-
+  CHN0 - AN13/AN14 (ALTERNATING), Vref-
   CHN1 - AN3(A Input), Vref-
   CHN2 - AN4(B Input), Vref-
   CHN3 - AN5(unused), Vref-
 */
-
-#define ADCON1_SETTING   (ADC_MODULE_ON & ADC_IDLE_STOP & ADC_FORMAT_INTG & ADC_CLK_INT0 & ADC_SAMPLE_SIMULTANEOUS & ADC_AUTO_SAMPLING_ON)
-#define ADCON2_SETTING   (ADC_VREF_EXT_EXT & ADC_SCAN_OFF & ADC_CONVERT_CH_0ABC & ADC_SAMPLES_PER_INT_1 & ADC_ALT_BUF_OFF & ADC_ALT_INPUT_OFF)
+/*
+  #define ADCON1_SETTING   (ADC_MODULE_ON & ADC_IDLE_STOP & ADC_FORMAT_INTG & ADC_CLK_INT0 & ADC_SAMPLE_SIMULTANEOUS & ADC_AUTO_SAMPLING_ON)
+  #define ADCON2_SETTING   (ADC_VREF_EXT_EXT & ADC_SCAN_OFF & ADC_CONVERT_CH_0ABC & ADC_SAMPLES_PER_INT_1 & ADC_ALT_BUF_OFF & ADC_ALT_INPUT_OFF)
+  #define ADCON3_SETTING   (ADC_SAMPLE_TIME_10 & ADC_CONV_CLK_SYSTEM & ADC_CONV_CLK_2Tcy)
+  #define ADCHS_SETTING    (ADC_CHX_POS_SAMPLEA_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEA_VREFN & ADC_CH0_POS_SAMPLEA_AN4 & ADC_CH0_NEG_SAMPLEA_VREFN & ADC_CHX_POS_SAMPLEB_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEB_VREFN & ADC_CH0_POS_SAMPLEB_AN4 & ADC_CH0_NEG_SAMPLEB_VREFN)
+  #define ADPCFG_SETTING   (ENABLE_AN3_ANA & ENABLE_AN4_ANA & ENABLE_AN9_ANA & ENABLE_AN13_ANA & ENABLE_AN14_ANA)
+  #define ADCSSL_SETTING   (SKIP_SCAN_AN0 & SKIP_SCAN_AN1 & SKIP_SCAN_AN2 & SKIP_SCAN_AN6 & SKIP_SCAN_AN7 & SKIP_SCAN_AN9 & SKIP_SCAN_AN10 & SKIP_SCAN_AN11 & SKIP_SCAN_AN12 & SKIP_SCAN_AN13 & SKIP_SCAN_AN14 & SKIP_SCAN_AN15)
+*/
+#define ADCON1_SETTING_INT0     (ADC_MODULE_ON & ADC_IDLE_STOP & ADC_FORMAT_INTG & ADC_CLK_INT0 & ADC_SAMPLE_SIMULTANEOUS & ADC_AUTO_SAMPLING_ON)
+#define ADCON1_SETTING_INTERNAL (ADC_MODULE_ON & ADC_IDLE_STOP & ADC_FORMAT_INTG & ADC_CLK_AUTO & ADC_SAMPLE_SIMULTANEOUS & ADC_AUTO_SAMPLING_ON)
+#define ADCON2_SETTING   (ADC_VREF_EXT_EXT & ADC_SCAN_ON & ADC_CONVERT_CH_0ABC & ADC_SAMPLES_PER_INT_12 & ADC_ALT_BUF_OFF & ADC_ALT_INPUT_ON)
 #define ADCON3_SETTING   (ADC_SAMPLE_TIME_10 & ADC_CONV_CLK_SYSTEM & ADC_CONV_CLK_2Tcy)
-#define ADCHS_SETTING    (ADC_CHX_POS_SAMPLEA_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEA_VREFN & ADC_CH0_POS_SAMPLEA_AN4 & ADC_CH0_NEG_SAMPLEA_VREFN & ADC_CHX_POS_SAMPLEB_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEB_VREFN & ADC_CH0_POS_SAMPLEB_AN4 & ADC_CH0_NEG_SAMPLEB_VREFN)
+#define ADCHS_SETTING    (ADC_CHX_POS_SAMPLEA_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEA_VREFN & ADC_CH0_POS_SAMPLEA_AN13 & ADC_CH0_NEG_SAMPLEA_VREFN & ADC_CHX_POS_SAMPLEB_AN3AN4AN5 & ADC_CHX_NEG_SAMPLEB_VREFN & ADC_CH0_POS_SAMPLEB_AN14 & ADC_CH0_NEG_SAMPLEB_VREFN)
 #define ADPCFG_SETTING   (ENABLE_AN3_ANA & ENABLE_AN4_ANA & ENABLE_AN9_ANA & ENABLE_AN13_ANA & ENABLE_AN14_ANA)
-#define ADCSSL_SETTING   (SKIP_SCAN_AN0 & SKIP_SCAN_AN1 & SKIP_SCAN_AN2 & SKIP_SCAN_AN6 & SKIP_SCAN_AN7 & SKIP_SCAN_AN9 & SKIP_SCAN_AN10 & SKIP_SCAN_AN11 & SKIP_SCAN_AN12 & SKIP_SCAN_AN13 & SKIP_SCAN_AN14 & SKIP_SCAN_AN15)
-
-
+#define ADCSSL_SETTING   (SKIP_SCAN_AN0 & SKIP_SCAN_AN1 & SKIP_SCAN_AN2 & SKIP_SCAN_AN3 & SKIP_SCAN_AN4 & SKIP_SCAN_AN5 & SKIP_SCAN_AN6 & SKIP_SCAN_AN7 & SKIP_SCAN_AN8 & SKIP_SCAN_AN10 & SKIP_SCAN_AN11 & SKIP_SCAN_AN12 & SKIP_SCAN_AN15)
 
 
 typedef struct {
@@ -183,10 +186,8 @@ typedef struct {
   unsigned int b_adc_reading_internal;
   unsigned int a_adc_reading_external;
   unsigned int b_adc_reading_external;
-  AnalogInput  reverse_power_sample;             // This is the reverse power data
-  AnalogInput  forward_power_sample;             // Unused at this time - for development, the internal adc reading is stored here
-  unsigned int reverse_power_db;                 // Without Miniciruit detector this is not in dB, it is just an scalar
-  unsigned int forward_power_db;                 // Without Miniciruit detector this is not in dB, it is just an scalar
+  AnalogInput  reverse_power_sample;             // This is the reverse power data - at the moment unscaled from the ADC reading
+  AnalogInput  forward_power_sample;             // This is the foward power data - at the moment unscaled from the ADC reading
 
   // Cooldown Variables
   unsigned int afc_hot_position;                 // This is part of the cooldown algorithm
@@ -195,6 +196,11 @@ typedef struct {
   // Fast AFC Variables
   unsigned int no_decision_counter;              // This counts how many consecutive samples the AFC has been unable to figure out if it should go up or down
   unsigned int position_at_trigger;
+
+
+  // Voltage monitors and housekeeping
+  AnalogInput analog_input_5v_monitor;
+  AnalogInput analog_input_24v_monitor;
 
 } AFCControlData;
 
@@ -241,9 +247,6 @@ typedef struct {
   unsigned long previous_position_reading_accumulator;
   unsigned int  reading_count;
   unsigned int  current_movement_direction;
-  unsigned int  rev_power_average_32_tau;
-  unsigned int  rev_power_average_8_tau;
-
 } TYPE_POWER_READINGS;
 
 

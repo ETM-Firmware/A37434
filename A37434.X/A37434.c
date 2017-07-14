@@ -1,6 +1,10 @@
 #include "A37434.h"
 #include "FIRMWARE_VERSION.h"
 
+// DPARKER Complte adding 5V and 24V monitoring
+// Need to switch the ADC between external and internal triggering
+
+
 // This is the firmware for the AFC BOARD
 
 
@@ -44,7 +48,8 @@ TYPE_POWER_READINGS power_readings;      // This stores the history of the posit
 STEPPER_MOTOR afc_motor;                 // This contains the control data for the motor
 AFCControlData global_data_A37434;       // Global variables
 
-
+MCP4725 U13_MCP4725;
+unsigned int test_value;
 
 void DoStateMachine(void);
 void InitializeA37434(void);
@@ -59,11 +64,6 @@ unsigned int CheckForAFCFastDone(void);
 void ClearPowerReadings(void);
 
 
-unsigned int ConvertToDBMiniCircuit(unsigned int adc_reading_100uV);
-unsigned int ConvertToDBRFDetector(unsigned int adc_reading_100uV);
-
-
-
 
 void DoAFCCooldown(void);
 void DoA37434(void);
@@ -71,6 +71,8 @@ void UpdateFaults(void);
 unsigned int ShiftIndex(unsigned int index, unsigned int shift);
 
 
+void ADCTriggerInternal(void);
+void ADCTriggerINT0(void);
 
 
 int main(void) {
@@ -86,6 +88,7 @@ void DoStateMachine(void) {
 
   case STATE_STARTUP:
     InitializeA37434();
+    ADCTriggerInternal();
     _TRISG1 = 0;  // FOR DEBUGGING
     afc_motor.min_position = 0;
     afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
@@ -95,6 +98,7 @@ void DoStateMachine(void) {
     break;
 
   case STATE_AUTO_ZERO:
+    ADCTriggerInternal();
     afc_motor.current_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.target_position  = 0;
     _CONTROL_NOT_CONFIGURED = 1;
@@ -108,6 +112,7 @@ void DoStateMachine(void) {
     break;
 
   case STATE_AUTO_HOME:
+    ADCTriggerInternal();
     afc_motor.min_position = AFC_MOTOR_MIN_POSITION;
     afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.target_position = afc_motor.home_position;
@@ -123,6 +128,7 @@ void DoStateMachine(void) {
     break;
     
   case STATE_RUN_AFC:
+    ADCTriggerINT0();
     _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 0;
     while (global_data_A37434.control_state == STATE_RUN_AFC) {
       DoA37434();
@@ -140,6 +146,7 @@ void DoStateMachine(void) {
     
     
   case STATE_RUN_MANUAL:
+    ADCTriggerINT0();
     _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 0;
     while (global_data_A37434.control_state == STATE_RUN_MANUAL) {
       DoA37434();
@@ -196,7 +203,7 @@ void InitializeA37434(void) {
   PDC4    = PDC4_SETTING;
   PTCON   = PTCON_SETTING;
   
-  PR1 = PR1_FAST_SETTING;
+  PR1 = PR1_SETTING;
   _T1IF = 0;
   _T1IP = 6;
   _T1IE = 1;
@@ -211,7 +218,7 @@ void InitializeA37434(void) {
   ADCHS  = ADCHS_SETTING;
   ADPCFG = ADPCFG_SETTING;
   ADCSSL = ADCSSL_SETTING;
-  ADCON1 = ADCON1_SETTING;
+  ADCON1 = ADCON1_SETTING_INT0;
   
   _INT1IF = 0;
   _INT1IP = 7;
@@ -228,6 +235,8 @@ void InitializeA37434(void) {
   ETMEEPromUseExternal();
   ETMEEPromConfigureExternalDevice(EEPROM_SIZE_8K_BYTES, FCY_CLK, ETM_I2C_400K_BAUD, EEPROM_I2C_ADDRESS_0, I2C_PORT_1);
 
+  SetupMCP4725(&U13_MCP4725, I2C_PORT_1, MCP4725_ADDRESS_A0_0, FCY_CLK, ETM_I2C_400K_BAUD);
+
   // Initialize the SPI Module
   ConfigureSPI(ETM_SPI_PORT_2, ETM_DEFAULT_SPI_CON_VALUE, ETM_DEFAULT_SPI_CON2_VALUE, ETM_DEFAULT_SPI_STAT_VALUE, SPI_CLK_2_MBIT, FCY_CLK);
   
@@ -241,8 +250,12 @@ void InitializeA37434(void) {
     b_sample_cal        = ANALOG_INPUT_4;
   }
 
+  // Do not use the EEPROM until we update the external eeprom to be more reliable
+  a_sample_cal        = ANALOG_INPUT_NO_CALIBRATION;
+  b_sample_cal        = ANALOG_INPUT_NO_CALIBRATION;
+
   ETMAnalogInitializeInput(&global_data_A37434.reverse_power_sample,
-			   MACRO_DEC_TO_SCALE_FACTOR_16(.6250),
+			   MACRO_DEC_TO_SCALE_FACTOR_16(1),
 			   OFFSET_ZERO,
 			   a_sample_cal,
 			   NO_OVER_TRIP,
@@ -253,7 +266,7 @@ void InitializeA37434(void) {
 			   NO_COUNTER);
 
   ETMAnalogInitializeInput(&global_data_A37434.forward_power_sample,
-			   MACRO_DEC_TO_SCALE_FACTOR_16(.6250),
+			   MACRO_DEC_TO_SCALE_FACTOR_16(1),
 			   OFFSET_ZERO,
 			   b_sample_cal,
 			   NO_OVER_TRIP,
@@ -280,36 +293,27 @@ void InitializeA37434(void) {
 
 void DoPostPulseProcess(void) {
   global_data_A37434.sample_complete = 0;
-  
-  // First - Scale and calibrate the power readings
-  // Reverse Power Samples are stored in 100uV Units
-  // Then convert to dB
+  global_data_A37434.time_off_counter = 0;
+  global_data_A37434.pulses_on_this_run++;
+
+
+  // Diode Detector outpus are sampled and converted in 5uV per LSB
+
   // The B "input" has the reverse power
-  global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
-  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
-  global_data_A37434.reverse_power_db = ConvertToDBRFDetector(global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
-
-  // DPARKER - THIS "FORWARD POWER" Section is just for evaluating the internal ADC readings
-  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_internal;
+  global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;  
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
-  global_data_A37434.forward_power_db = ConvertToDBRFDetector(global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
 
-
-  ETMCanSlaveSetDebugRegister(0x0, global_data_A37434.a_adc_reading_external);
-  ETMCanSlaveSetDebugRegister(0x1, global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
-  ETMCanSlaveSetDebugRegister(0x2, global_data_A37434.reverse_power_db);
-
-  ETMCanSlaveSetDebugRegister(0x4, global_data_A37434.a_adc_reading_internal);
-  ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
-  ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.forward_power_db);
+  // The A "input" has the forward power
+  global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_external;
+  ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
 
 
   if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
     ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
 			    global_data_A37434.sample_index,
 			    global_data_A37434.position_at_trigger,
-			    global_data_A37434.reverse_power_db,
-			    global_data_A37434.forward_power_db);
+			    global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated,
+			    global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
 
 
     // This log register is unused at this time
@@ -328,19 +332,16 @@ void DoPostPulseProcess(void) {
 
 
 void DoAFCReversePower(void) {
-  PR1 = PR1_FAST_SETTING; // Force the motor speed to fast
   if (global_data_A37434.fast_afc_done == 1) {
     DoAFCReversePowerSlow();
   } else {
     DoAFCReversePowerFast();
-    
     if (CheckForAFCFastDone()) {
       global_data_A37434.fast_afc_done = 1;
       ClearPowerReadings();
     }
   }    
 }
-
 
 
 unsigned int CheckForAFCFastDone(void) {
@@ -370,7 +371,7 @@ void DoAFCReversePowerSlow(void) {
   unsigned int next_direction;
   unsigned int move_amount;
 
-  power_readings.reading_accumulator += global_data_A37434.reverse_power_db;
+  power_readings.reading_accumulator += global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
   power_readings.reading_count++;
   
   if (power_readings.reading_count >= SAMPLES_AT_EACH_POINT) {
@@ -387,9 +388,9 @@ void DoAFCReversePowerSlow(void) {
     }
     
     if (next_direction == MOVE_UP) {
-      afc_motor.target_position = afc_motor.target_position + move_amount; 
+      afc_motor.target_position = ETMMath16Add(afc_motor.target_position,move_amount); 
     } else {
-      afc_motor.target_position = afc_motor.target_position - move_amount;
+      afc_motor.target_position = ETMMath16Sub(afc_motor.target_position,move_amount);
     }
     
     power_readings.previous_position_reading_accumulator = power_readings.reading_accumulator;
@@ -418,8 +419,8 @@ void DoAFCReversePowerFast(void) {
   power_readings.active_index++;
   power_readings.active_index &= 0x000F;
   
-  power_readings.reverse_power[power_readings.active_index] = global_data_A37434.reverse_power_db;
-  power_readings.forward_power[power_readings.active_index] = global_data_A37434.forward_power_db;
+  power_readings.reverse_power[power_readings.active_index] = global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
+  power_readings.forward_power[power_readings.active_index] = global_data_A37434.forward_power_sample.reading_scaled_and_calibrated;
   power_readings.position[power_readings.active_index]      = global_data_A37434.position_at_trigger;
 
 
@@ -430,7 +431,7 @@ void DoAFCReversePowerFast(void) {
     relative_index = ((relative_index - 1) & 0x000F);
     calculated_move += CalculateDirection(global_data_A37434.position_at_trigger,
 					  power_readings.position[relative_index],
-					  global_data_A37434.reverse_power_db,
+					  global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated,
 					  power_readings.reverse_power[relative_index]);
   }
   
@@ -456,12 +457,12 @@ void DoAFCReversePowerFast(void) {
   
   // Override the direction calculation if the motor is very far from the home position
 
-  if (global_data_A37434.position_at_trigger > afc_motor.home_position + AFC_CONTROL_WINDOW_RANGE) {
+  if (global_data_A37434.position_at_trigger > ETMMath16Add(afc_motor.home_position, AFC_CONTROL_WINDOW_RANGE)) {
     next_direction = MOVE_DOWN;
     ClearPowerReadings();
   }
 
-  if (global_data_A37434.position_at_trigger < afc_motor.home_position - AFC_CONTROL_WINDOW_RANGE) {
+  if (global_data_A37434.position_at_trigger < ETMMath16Sub(afc_motor.home_position, AFC_CONTROL_WINDOW_RANGE)) {
     next_direction = MOVE_UP;
     ClearPowerReadings();
   }
@@ -471,33 +472,10 @@ void DoAFCReversePowerFast(void) {
   // Figure out how far and how fast we are going to move
 
   if (next_direction == MOVE_UP) {
-    afc_motor.target_position = afc_motor.current_position + FAST_MOVE_TARGET_DELTA; 
+    afc_motor.target_position = ETMMath16Add(afc_motor.current_position, FAST_MOVE_TARGET_DELTA); 
   } else {
-    afc_motor.target_position = afc_motor.current_position - FAST_MOVE_TARGET_DELTA;
+    afc_motor.target_position = ETMMath16Sub(afc_motor.current_position, FAST_MOVE_TARGET_DELTA);
   }
-}
-
-
-unsigned int ConvertToDBRFDetector(unsigned int adc_reading_100uV) {
-  return adc_reading_100uV;
-}
-
-
-unsigned int ConvertToDBMiniCircuit(unsigned int adc_reading_100uV) {
-  unsigned int value;
-  if (adc_reading_100uV > MAX_ADC_READING_100_UV) {
-    adc_reading_100uV = MAX_ADC_READING_100_UV;
-  }
-
-  if (adc_reading_100uV < MIN_ADC_READING_100_UV) {
-    adc_reading_100uV = MIN_ADC_READING_100_UV;
-  }
-  
-  value = MAX_ADC_READING_100_UV - adc_reading_100uV;
-  // Divide by 2.5 to get .01 dB units
-  value = ETMScaleFactor2(value, MACRO_DEC_TO_CAL_FACTOR_2(.4), 0);
-
-  return value;
 }
 
 
@@ -513,29 +491,28 @@ void ClearPowerReadings(void) {
 
 
 unsigned int CalculateDirection(unsigned int current_pos, unsigned int previous_pos, unsigned int current_rev_pwr, unsigned int previous_rev_pwr) {
-  // we want to count this as a change direction, unless the data strongly says to keep going in the same direction
   unsigned int minimum_rev_power_change;
   
-  if (global_data_A37434.reverse_power_db < 7000) {
-    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_7K_MINUS;
-  } else if (global_data_A37434.reverse_power_db < 10000) {
-    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_7K_10K;
+  if (global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated < 11000) {
+    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_11K_MINUS;
+  } else if (global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated < 16000) {
+    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_11K_16K;
   } else {
-    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_10K_PLUS;
+    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_16K_PLUS;
   }
-
-
+  
+  
   if ((previous_pos == 0) || (previous_rev_pwr == 0)) {
     // The buffer is empty (or bad reading) and has no data in it so skip this comp.
     return MOVE_NO_DATA;
   }
-
-  if (((current_pos + MINIMUM_POSITION_CHANGE) > previous_pos) && ((current_pos - MINIMUM_POSITION_CHANGE) < previous_pos)) {
+  
+  if ((ETMMath16Add(current_pos, MINIMUM_POSITION_CHANGE) > previous_pos) && (ETMMath16Sub(current_pos, MINIMUM_POSITION_CHANGE) < previous_pos)) {
     // The positions are very close
     return MOVE_NO_DATA;
   } 
   
-  if (((current_rev_pwr + minimum_rev_power_change) > previous_rev_pwr) && ((current_rev_pwr - minimum_rev_power_change) < previous_rev_pwr)) {
+  if ((ETMMath16Add(current_rev_pwr, minimum_rev_power_change) > previous_rev_pwr) && (ETMMath16Sub(current_rev_pwr, minimum_rev_power_change) < previous_rev_pwr)) {
     // The reverse power readings are very close
     return MOVE_NO_DATA;
   }
@@ -567,17 +544,28 @@ void DoAFCCooldown(void) {
   unsigned int shift_position;
 
   if (afc_motor.home_position > global_data_A37434.afc_hot_position) {
-    position_difference = afc_motor.home_position - global_data_A37434.afc_hot_position;
+    position_difference = ETMMath16Sub(afc_motor.home_position, global_data_A37434.afc_hot_position);
     shift_position = ETMScaleFactor2(position_difference, CoolDownTable[global_data_A37434.time_off_counter >> 9], 0);
-    afc_motor.target_position = afc_motor.home_position - shift_position;
+    afc_motor.target_position = ETMMath16Sub(afc_motor.home_position, shift_position);
   } else {
-    position_difference = global_data_A37434.afc_hot_position - afc_motor.home_position; 
+    position_difference = ETMMath16Sub(global_data_A37434.afc_hot_position, afc_motor.home_position); 
     shift_position = ETMScaleFactor2(position_difference, CoolDownTable[global_data_A37434.time_off_counter >> 9], 0);
-    afc_motor.target_position = afc_motor.home_position + shift_position;
+    afc_motor.target_position = ETMMath16Add(afc_motor.home_position, shift_position);
   }
 }
 
 
+void ADCTriggerInternal(void) {
+  ADCON1 = 0;
+  __delay32(20);
+  ADCON1 = ADCON1_SETTING_INTERNAL;
+}
+
+void ADCTriggerINT0(void) {
+  ADCON1 = 0;
+  __delay32(20);
+  ADCON1 = ADCON1_SETTING_INT0;
+}
 
 
 void DoA37434(void) {
@@ -593,6 +581,8 @@ void DoA37434(void) {
     slave_board_data.log_data[11] = afc_motor.home_position;
     
     UpdateFaults();
+    MCP4725UpdateFast(&U13_MCP4725, test_value);
+    test_value += 0x0010;
 
 
     // Update the "Hot Position" - This is where the motor ended when we stopped pulsing
@@ -618,21 +608,43 @@ void DoA37434(void) {
     }
 
     global_data_A37434.time_on_this_run++;
-    
     /*
-    ETMCanSlaveSetDebugRegister(0x0, ADCBUF1);
-    ETMCanSlaveSetDebugRegister(0x1, ADCBUF2);
-    ETMCanSlaveSetDebugRegister(0x2, ADCBUF9);
-    ETMCanSlaveSetDebugRegister(0x3, ADCBUFA);
-    ETMCanSlaveSetDebugRegister(0x4, global_data_A37434.aft_A_sample.filtered_adc_reading);
-    ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.aft_B_sample.filtered_adc_reading);
-    ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.aft_A_sample.reading_scaled_and_calibrated);
-    ETMCanSlaveSetDebugRegister(0x7, global_data_A37434.aft_B_sample.reading_scaled_and_calibrated);  
-    ETMCanSlaveSetDebugRegister(0x8, global_data_A37434.aft_A_sample.reading_scaled_and_calibrated);
-    ETMCanSlaveSetDebugRegister(0x9, global_data_A37434.aft_B_sample.reading_scaled_and_calibrated);
-    ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.aft_A_sample_filtered);
-    ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.aft_B_sample_filtered);
+    ETMCanSlaveSetDebugRegister(0x0, ADCBUF0);
+    ETMCanSlaveSetDebugRegister(0x1, ADCBUF1);
+    ETMCanSlaveSetDebugRegister(0x2, ADCBUF2);
+    ETMCanSlaveSetDebugRegister(0x3, ADCBUF3);
+    ETMCanSlaveSetDebugRegister(0x4, ADCBUF4);
+    ETMCanSlaveSetDebugRegister(0x5, ADCBUF5);
+    ETMCanSlaveSetDebugRegister(0x6, ADCBUF6);
+    ETMCanSlaveSetDebugRegister(0x7, ADCBUF7);
+
+    ETMCanSlaveSetDebugRegister(0x8, ADCBUF8);
+    ETMCanSlaveSetDebugRegister(0x9, ADCBUF9);
+    ETMCanSlaveSetDebugRegister(0xA, ADCBUFA);
+    ETMCanSlaveSetDebugRegister(0xB, ADCBUFB);
+    ETMCanSlaveSetDebugRegister(0xC, ADCBUFC);
+    ETMCanSlaveSetDebugRegister(0xD, ADCBUFD);
+    ETMCanSlaveSetDebugRegister(0xE, ADCBUFE);
+    ETMCanSlaveSetDebugRegister(0xF, ADCBUFF);
+    
     */
+
+
+
+    ETMCanSlaveSetDebugRegister(0x0, global_data_A37434.control_state);
+    ETMCanSlaveSetDebugRegister(0x1, global_data_A37434.manual_target_position);
+    ETMCanSlaveSetDebugRegister(0x2, afc_motor.current_position);
+    ETMCanSlaveSetDebugRegister(0x3, afc_motor.target_position);
+    ETMCanSlaveSetDebugRegister(0x4, afc_motor.home_position);
+
+    ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.a_adc_reading_external);
+    ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.a_adc_reading_internal);
+    ETMCanSlaveSetDebugRegister(0xC, global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
+    
+    ETMCanSlaveSetDebugRegister(0xD, global_data_A37434.b_adc_reading_external);
+    ETMCanSlaveSetDebugRegister(0xE, global_data_A37434.b_adc_reading_internal);
+    ETMCanSlaveSetDebugRegister(0xF, global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
+
   }
 }
 
@@ -664,19 +676,16 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
 
   /* 
      The INT1 Interrupt is read back data from the ADCs (they should have already been sampled)
+     INT0 Triggers the Internal ADC Conversion
   */
-  
-  PIN_TEST_POINT_A = 1;
-
-  __delay32(80);  // wait 8us to pulse to terminate
 
   global_data_A37434.position_at_trigger = afc_motor.current_position;
-
-
-  // Wait for completion of the internal ADC
-  // while (!_DONE); we don't need to wait because of the 10us delay above
+  
+  __delay32(80);  // wait 8us to pulse to terminate
+  
+  // The internal ADC has completed converison by now
   global_data_A37434.a_adc_reading_internal = ADCBUF1 << 6;
-  global_data_A37434.b_adc_reading_internal = ADCBUF0 << 6;
+  global_data_A37434.b_adc_reading_internal = ADCBUF2 << 6;
   
   // Read the data from the external ADCs
     
@@ -703,12 +712,8 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
   }
   PIN_INPUT_B_CS = !OLL_SELECT_ADC;  
   
-  
-  global_data_A37434.pulses_on_this_run++;
-  global_data_A37434.time_off_counter = 0;
   global_data_A37434.sample_index = ETMCanSlaveGetPulseCount();
   global_data_A37434.sample_complete = 1;
-  PIN_TEST_POINT_A = 0;
 
   _INT1IF = 0;
 }
@@ -814,18 +819,10 @@ void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
     case ETM_CAN_REGISTER_AFC_CMD_RELATIVE_MOVE_MANUAL_TARGET:
       if (message_ptr->word1) {
 	// decrease the target position;
-	if (global_data_A37434.manual_target_position > message_ptr->word0) {
-	  global_data_A37434.manual_target_position -= message_ptr->word0;
-	} else {
-	  global_data_A37434.manual_target_position = 0;
-	}
+	global_data_A37434.manual_target_position = ETMMath16Sub(global_data_A37434.manual_target_position, message_ptr->word0);
       } else {
 	// increase the target position;
-	if ((0xFFFF - message_ptr->word0) > global_data_A37434.manual_target_position) {
-	  global_data_A37434.manual_target_position += message_ptr->word0;
-	} else {
-	  global_data_A37434.manual_target_position = 0xFFFF;
-	}
+	global_data_A37434.manual_target_position = ETMMath16Add(global_data_A37434.manual_target_position, message_ptr->word0);
       }
       break;
 
