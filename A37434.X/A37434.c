@@ -1,7 +1,6 @@
 #include "A37434.h"
 #include "FIRMWARE_VERSION.h"
 
-
 unsigned int ETMMath16Delta(unsigned int value_1, unsigned int value_2);
 
 // DPARKER Complte adding 5V and 24V monitoring
@@ -287,7 +286,6 @@ void InitializeA37434(void) {
   power_readings.current_movement_direction = MOVE_DOWN;
   power_readings.reading_count = 0;
   power_readings.reading_accumulator = 0;
-  power_readings.previous_position_reading_accumulator = 0;
   ClearPowerReadings();
 
 }
@@ -302,23 +300,23 @@ void DoPostPulseProcess(void) {
 
   // Diode Detector outpus are sampled and converted in 5uV per LSB
 
-  // The B "input" has the reverse power
+  // The A "input" has the reverse power
   global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;  
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
 
-  // The A "input" has the forward power
+  // The B "input" has the forward power
   global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_external;
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
 
 
   if (ETMCanSlaveGetSyncMsgHighSpeedLogging()) {
+
     ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_1,
 			    global_data_A37434.sample_index,
 			    global_data_A37434.position_at_trigger,
 			    global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated,
 			    global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
-
-
+    
     // This log register is unused at this time
     /*
     ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_0,
@@ -374,41 +372,25 @@ void DoAFCReversePowerSlow(void) {
   unsigned int next_direction;
   unsigned int move_amount;
 
-  unsigned int current_position;
-  unsigned int position_adjustment;
 
   /*
     A positive change in direction of 64 steps (big move size) will result in a natural decrease in reverse power of 40.  This is irreguardless of tuning
   */
   
-#define NDT_LINAC_FWD_POWER_POSITION_SCALE_FACTOR .625
-
   power_readings.reading_accumulator += global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
   power_readings.reading_count++;
   
   if (power_readings.reading_count >= SAMPLES_AT_EACH_POINT) {
     // adjust for position change
 
-      position_adjustment = ETMMath16Delta(power_readings.previous_position, current_position);
-      ETMCanSlaveSetDebugRegister(0x5, position_adjustment);
-      position_adjustment = ETMScaleFactor2(position_adjustment, MACRO_DEC_TO_CAL_FACTOR_2(NDT_LINAC_FWD_POWER_POSITION_SCALE_FACTOR), 0);
-      ETMCanSlaveSetDebugRegister(0x6, position_adjustment);
-      position_adjustment *= SAMPLES_AT_EACH_POINT;
-      ETMCanSlaveSetDebugRegister(0x7, position_adjustment);
-      
-      /*
-      if (current_position > power_readings.previous_position) {
-      power_readings.previous_position_reading_accumulator -= position_adjustment;
-      } else {
-      power_readings.previous_position_reading_accumulator += position_adjustment;
-      }
-      */
+    power_readings.reading_accumulator >>= 5;
+    power_readings.average_reverse_power_this_sample = power_readings.reading_accumulator;
 
-    if (power_readings.reading_accumulator < power_readings.previous_position_reading_accumulator) {
+    if (power_readings.average_reverse_power_this_sample < power_readings.average_reverse_power_previous_sample) {
       next_direction = power_readings.current_movement_direction;
-      move_amount = MOVE_SIZE_BIG;
-    } else {
       move_amount = MOVE_SIZE_SMALL;
+    } else {
+      move_amount = MOVE_SIZE_BIG;
       if (power_readings.current_movement_direction == MOVE_DOWN) {
 	next_direction = MOVE_UP;
       } else {
@@ -416,21 +398,17 @@ void DoAFCReversePowerSlow(void) {
       }
     }
     
+
     if (next_direction == MOVE_UP) {
       afc_motor.target_position = ETMMath16Add(afc_motor.target_position,move_amount); 
     } else {
       afc_motor.target_position = ETMMath16Sub(afc_motor.target_position,move_amount);
     }
-    
-    power_readings.previous_position_reading_accumulator = power_readings.reading_accumulator;
+
+    power_readings.average_reverse_power_previous_sample = power_readings.average_reverse_power_this_sample;
     power_readings.current_movement_direction = next_direction;
     power_readings.reading_count = 0;
     power_readings.reading_accumulator = 0;
-
-    //power_readings.previous_forward_reading_accumulator = power_readings.forward_reading_accumulator;
-    //power_readings.forward_reading_accumulator = 0;
-    power_readings.previous_position = current_position;
-    
 
   }
 }
