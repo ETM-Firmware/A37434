@@ -1,6 +1,15 @@
 #ifndef __A37434_SETTINGS
 #define __A37434_SETTINGS
 
+
+
+
+//#define __NJRC_MAGNETRON
+
+
+
+
+
 // Motor Configuration
 #define AFC_MOTOR_MIN_POSITION                 1000
 #define AFC_MOTOR_MAX_POSITION                 34000
@@ -22,10 +31,23 @@
 #define MINIMUM_REV_PWR_CHANGE_11K_16K          5    
 #define MINIMUM_REV_PWR_CHANGE_11K_MINUS        3
 
+
 // Slow Mode Movement Configuaration
+
+#ifndef __NJRC_MAGNETRON
+
 #define MOVE_SIZE_BIG          64
 #define MOVE_SIZE_SMALL        32
 #define SAMPLES_AT_EACH_POINT  32
+
+#else
+
+#define MOVE_SIZE_BIG          16
+#define MOVE_SIZE_SMALL        8
+#define SAMPLES_AT_EACH_POINT  32
+
+#endif
+
 
 
 // Fast to Slow mode switch configuration

@@ -281,7 +281,7 @@ void InitializeA37434(void) {
 
   // Initialize the Can module
   ETMCanSlaveInitialize(CAN_PORT_1, FCY_CLK, ETM_CAN_ADDR_AFC_CONTROL_BOARD, _PIN_RD10, 4, _PIN_RD10, _PIN_RD9);
-  ETMCanSlaveLoadConfiguration(37434, 0, FIRMWARE_AGILE_REV, FIRMWARE_BRANCH, FIRMWARE_MINOR_REV);
+  ETMCanSlaveLoadConfiguration(37434, 001, FIRMWARE_AGILE_REV, FIRMWARE_BRANCH, FIRMWARE_MINOR_REV);
 
   power_readings.current_movement_direction = MOVE_DOWN;
   power_readings.reading_count = 0;
@@ -301,11 +301,13 @@ void DoPostPulseProcess(void) {
   // Diode Detector outpus are sampled and converted in 5uV per LSB
 
   // The A "input" has the reverse power
-  global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;  
+  global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
+  //global_data_A37434.reverse_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_external;  
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.reverse_power_sample);
 
   // The B "input" has the forward power
   global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.b_adc_reading_external;
+  //global_data_A37434.forward_power_sample.filtered_adc_reading = global_data_A37434.a_adc_reading_external;
   ETMAnalogScaleCalibrateADCReading(&global_data_A37434.forward_power_sample);
 
 
@@ -317,15 +319,11 @@ void DoPostPulseProcess(void) {
 			    global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated,
 			    global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
     
-    // This log register is unused at this time
-    /*
     ETMCanSlaveLogPulseData(ETM_CAN_DATA_LOG_REGISTER_AFC_FAST_LOG_0,
 			    global_data_A37434.sample_index,
-			    calculated_move,
-			    global_data_A37434.pulses_on_this_run,
+			    global_data_A37434.b_adc_reading_internal,
+			    global_data_A37434.a_adc_reading_internal,
 			    0x0000);
-    */
-    
   }
 }
 
@@ -592,6 +590,9 @@ void DoA37434(void) {
     slave_board_data.log_data[1] = afc_motor.target_position;
     slave_board_data.log_data[2] = afc_motor.current_position;
     slave_board_data.log_data[11] = afc_motor.home_position;
+    slave_board_data.log_data[5] = global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
+    slave_board_data.log_data[6] = global_data_A37434.forward_power_sample.reading_scaled_and_calibrated;
+
     
     UpdateFaults();
     MCP4725UpdateFast(&U13_MCP4725, test_value);
@@ -650,6 +651,11 @@ void DoA37434(void) {
     ETMCanSlaveSetDebugRegister(0x3, afc_motor.target_position);
     ETMCanSlaveSetDebugRegister(0x4, afc_motor.home_position);
 
+
+    ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.sample_index);
+    ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.test_trigger_received);
+				
+    
     ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.a_adc_reading_external);
     ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.a_adc_reading_internal);
     ETMCanSlaveSetDebugRegister(0xC, global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
@@ -728,6 +734,9 @@ void __attribute__((interrupt, no_auto_psv)) _INT1Interrupt(void) {
   global_data_A37434.sample_index = ETMCanSlaveGetPulseCount();
   global_data_A37434.sample_complete = 1;
 
+  //Dparker test
+  global_data_A37434.test_trigger_received++;
+  
   _INT1IF = 0;
 }
 

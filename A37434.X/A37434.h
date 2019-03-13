@@ -202,6 +202,9 @@ typedef struct {
   AnalogInput analog_input_5v_monitor;
   AnalogInput analog_input_24v_monitor;
 
+  unsigned int test_trigger_received;
+
+  
 } AFCControlData;
 
 extern AFCControlData global_data_A37434;
