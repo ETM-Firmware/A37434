@@ -55,6 +55,7 @@ unsigned int test_value;
 
 void DoStateMachine(void);
 void InitializeA37434(void);
+void InitializeMotor(void);
 void DoPostPulseProcess(void);
 
 // AFC Helper Functions
@@ -96,18 +97,29 @@ void DoStateMachine(void) {
     afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.home_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.time_steps_stopped = 0;
-    global_data_A37434.control_state = STATE_AUTO_ZERO;
+    global_data_A37434.control_state = STATE_WAIT_INIT;
     break;
 
-  case STATE_AUTO_ZERO:
+  case STATE_WAIT_INIT:
+    _CONTROL_NOT_CONFIGURED = 1;
     ADCTriggerInternal();
+    while (global_data_A37434.control_state == STATE_WAIT_INIT) {
+      DoA37434();
+      if (_CONTROL_NOT_CONFIGURED == 0) {
+	global_data_A37434.control_state = STATE_AUTO_ZERO;
+      }
+    }
+    break;
+    
+    
+  case STATE_AUTO_ZERO:
+    InitializeMotor();
     afc_motor.current_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.target_position  = 0;
-    _CONTROL_NOT_CONFIGURED = 1;
     _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 1;
     while (global_data_A37434.control_state == STATE_AUTO_ZERO) {
       DoA37434();
-      if ((afc_motor.current_position <= 100) && (_CONTROL_NOT_CONFIGURED == 0)) {
+      if (afc_motor.current_position <= 100) {
 	global_data_A37434.control_state = STATE_AUTO_HOME;
       }
     }
@@ -170,22 +182,10 @@ void DoStateMachine(void) {
   }
 }
 
-
-void InitializeA37434(void) {
-  unsigned char a_sample_cal;
-  unsigned char b_sample_cal;
-  
-  TRISA = A37434_TRISA_VALUE;
-  TRISB = A37434_TRISB_VALUE;
-  TRISC = A37434_TRISC_VALUE;
-  TRISD = A37434_TRISD_VALUE;
-  TRISE = A37434_TRISE_VALUE;
-  TRISF = A37434_TRISF_VALUE;
-  TRISG = A37434_TRISG_VALUE;
-  
+void InitializeMotor(void) {
   PIN_MOTOR_DRV_RESET_NOT = 1;
   PIN_MOTOR_DRV_SLEEP_NOT = 1;
-  
+
   PIN_MOTOR_DRV_ISET_A0   = 0;
   PIN_MOTOR_DRV_ISET_A1   = 0;
   PIN_MOTOR_DRV_ISET_B0   = 0;
@@ -210,6 +210,24 @@ void InitializeA37434(void) {
   _T1IP = 6;
   _T1IE = 1;
   T1CON = T1CON_SETTING;
+  
+}
+
+
+void InitializeA37434(void) {
+  unsigned char a_sample_cal;
+  unsigned char b_sample_cal;
+  
+  TRISA = A37434_TRISA_VALUE;
+  TRISB = A37434_TRISB_VALUE;
+  TRISC = A37434_TRISC_VALUE;
+  TRISD = A37434_TRISD_VALUE;
+  TRISE = A37434_TRISE_VALUE;
+  TRISF = A37434_TRISF_VALUE;
+  TRISG = A37434_TRISG_VALUE;
+  
+  PIN_MOTOR_DRV_RESET_NOT = 0;
+  PIN_MOTOR_DRV_SLEEP_NOT = 0;
   
   PR3 = PR3_VALUE_10_MILLISECONDS;
   T3CON = T3CON_VALUE;

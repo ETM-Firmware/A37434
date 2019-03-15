@@ -217,6 +217,7 @@ extern AFCControlData global_data_A37434;
 
 
 #define STATE_STARTUP       0x10
+#define STATE_WAIT_INIT     0x18
 #define STATE_AUTO_ZERO     0x20
 #define STATE_AUTO_HOME     0x30
 #define STATE_RUN_AFC       0x40
