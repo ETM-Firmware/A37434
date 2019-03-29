@@ -204,6 +204,7 @@ typedef struct {
 
   unsigned int test_trigger_received;
 
+  unsigned int startup_delay;
   
 } AFCControlData;
 

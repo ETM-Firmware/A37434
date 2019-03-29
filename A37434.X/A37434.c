@@ -103,9 +103,16 @@ void DoStateMachine(void) {
   case STATE_WAIT_INIT:
     _CONTROL_NOT_CONFIGURED = 1;
     ADCTriggerInternal();
+    global_data_A37434.startup_delay = 0;
     while (global_data_A37434.control_state == STATE_WAIT_INIT) {
       DoA37434();
-      if (_CONTROL_NOT_CONFIGURED == 0) {
+      /*
+	if (_CONTROL_NOT_CONFIGURED == 0) {
+	global_data_A37434.control_state = STATE_AUTO_ZERO;
+	}
+      */
+      if (global_data_A37434.startup_delay > 25) {
+	// 250ms have passed
 	global_data_A37434.control_state = STATE_AUTO_ZERO;
       }
     }
@@ -603,6 +610,8 @@ void DoA37434(void) {
   if (_T3IF) {
     _T3IF = 0;
 
+    global_data_A37434.startup_delay++;
+    
     // -------------- Update Logging Data ---------------- //
     slave_board_data.log_data[0] = 0;
     slave_board_data.log_data[1] = afc_motor.target_position;
