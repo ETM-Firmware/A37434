@@ -46,6 +46,9 @@ const unsigned int CoolDownTable[256]     = {COOL_DOWN_TABLE_VALUES};
   https://docs.google.com/spreadsheets/d/1pyvkoiT0XYzaxereZ0c7XMhMmgaBmKexELuavmLmR8k/
 */
 
+
+unsigned int reverse_power_data[800];
+
 TYPE_POWER_READINGS power_readings;      // This stores the history of the position and power readings for the previous 16 pulses 
 STEPPER_MOTOR afc_motor;                 // This contains the control data for the motor
 AFCControlData global_data_A37434;       // Global variables
@@ -127,7 +130,11 @@ void DoStateMachine(void) {
     while (global_data_A37434.control_state == STATE_AUTO_ZERO) {
       DoA37434();
       if (afc_motor.current_position <= 100) {
-	global_data_A37434.control_state = STATE_AUTO_HOME;
+	if (global_data_A37434.afc_auto_calibration_active) {
+	  global_data_A37434.control_state = STATE_AUTO_CALIBRATION;
+	} else {
+	  global_data_A37434.control_state = STATE_AUTO_HOME;
+	}
       }
     }
     break;
@@ -180,6 +187,33 @@ void DoStateMachine(void) {
       }
     }
     break;
+
+  case STATE_AUTO_CALIBRATION:
+    ADCTriggerINT0();
+    _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 1;
+    for (n = 1; n < 800; n++) {
+      reverse_power_data[n] = 0xFFFF;
+    }
+    while (global_data_A37434.control_state == STATE_AUTO_CALIBRATION) {
+      DoPostPulseProcess();
+      if (global_data_A37434.sample_complete) {
+	// Adjust the target position by 64
+	// Save the current position/reverse power
+	afc_motor.target_position = ETMMath16Add(afc_motor.current_position, 64);
+	if ((afc_motor.current_position >> 4) < 750) {
+	  reverse_power_data[afc_motor.current_position >> 4] = global_data_A37434.reverse_power_sample;
+	}
+      }
+      if (afc_motor.current_position >= (AFC_MOTOR_MAX_POSITION - 200)) {
+	// Figure out the best home position
+	new_home_position = FindReversePowerMinimum();
+	global_data_A37434.afc_auto_calibration_active = 0;
+	global_data_A37434.control_state = STATE_AUTO_ZERO;
+      }
+      
+    }
+    break;
+
     
 
   default:
@@ -887,4 +921,119 @@ unsigned int ETMMath16Delta(unsigned int value_1, unsigned int value_2) {
   } else {
     return (value_2 - value_1);
   }
+}
+
+
+
+unsigned int rev_power_position_array[800];
+unsigned int rev_power_power_array[800];
+
+unsigned int FindReversePowerMinimum(void) {
+  unsigned int n;
+  unsigned long accumulator;
+  unsigned int valid_samples;
+  unsigned int average;
+
+  unsigned int local_avg;
+  unsigned int local_min;
+  unsigned int local_max;
+  
+  unsigned int min_value;
+  unsigned int min_position;
+  unsigned int max_value;
+  unsigned int max_position;
+
+
+  // First average the data
+
+  avg_count = 0;
+  valid_data_count = 0;
+
+  accumulator = 0;
+  for (n = 0 ; n < 795 ; n++) {
+    if (reverse_power_data[n] < 0xFF00) {
+      // The data is a valid sample
+      rev_power_position_array[avg_count] = n << 4;
+      rev_power_power_array[avg_count] = reverse_power_data[n];
+      accumulator += reverse_power_data[n];
+      valid_samples++;
+    }
+  }
+
+  if (valid_samples > 100) {
+    accumulator = accumulator / valid_samples;
+    average = accumlator;
+  } else {
+    // Home Position could not be found;
+    return 0;
+  }
+
+
+  minimum_value = 0xFFFF;
+  minimum_position = 0;
+  
+  for (n = 2 ; n < valid_samples ; n++) {
+    data_n_minus_2 = rev_power_power_array[n - 2];
+    data_n_minus_1 = rev_power_power_array[n - 1];
+    data_n         = rev_power_power_array[n];
+    data_n_plus_1  = rev_power_power_array[n + 1];
+    data_n_plus_2  = rev_power_power_array[n + 2];
+    
+    accumulator = data_n_minus_2;
+    accumulator += data_n_minus_1;
+    accumulator += data_n;
+    accumulator += data_n_plus_1;
+    accumulator += data_n_plus_2;
+    
+    accumulator = accumulator / 5;
+    local_avg = accumulator;
+    
+    
+    local_min = data_n;
+    if (data_n_1 < local_min) {
+      local_min = data_n_1;
+    }
+    if (data_n_2 < local_min) {
+      local_min = data_n_2;
+    }
+    if (data_n_3 < local_min) {
+      local_min = data_n_3;
+    }
+    if (data_n_4 < local_min) {
+      local_min = data_n_4;
+    }
+
+    local_max = data_n;
+    if (data_n_1 > local_max) {
+      local_max = data_n_1;
+    }
+    if (data_n_2 > local_max) {
+      local_max = data_n_2;
+    }
+    if (data_n_3 > local_max) {
+      local_max = data_n_3;
+    }
+    if (data_n_4 > local_max) {
+      local_max = data_n_4;
+    }
+
+
+    if ((local_max - local_min) < MAX_LOCAL_DIFFERENCE) {
+      // otherwise there was too much variance between the samples
+      if ((local_max - local_min) < (local_avg >> 2)) {
+	// otherwise there was too much variance between the samples
+	if (local_avg < (average >> 3)) {
+	  // otherwise there was not enough signal
+	  if (local_avg < minimum_value) {
+	    minimum_value = local_avg;
+	    minimum_position = rev_power_position_array[n];
+	  }
+	}
+      }
+    }
+    
+  }
+
+  return minimum_position;
+
 }

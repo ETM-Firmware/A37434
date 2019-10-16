@@ -205,6 +205,8 @@ typedef struct {
   unsigned int test_trigger_received;
 
   unsigned int startup_delay;
+
+  unsigned int afc_auto_calibration_active;
   
 } AFCControlData;
 
@@ -223,7 +225,7 @@ extern AFCControlData global_data_A37434;
 #define STATE_AUTO_HOME     0x30
 #define STATE_RUN_AFC       0x40
 #define STATE_RUN_MANUAL    0x50
-
+#define STATE_AUTO_CALIBRATION 0x60
 
 
 
