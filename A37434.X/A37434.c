@@ -3,6 +3,13 @@
 
 unsigned int ETMMath16Delta(unsigned int value_1, unsigned int value_2);
 
+
+unsigned int FindReversePowerMinimum(void);
+void DoAFCForwardPowerSlow(void);
+void DoAFCReversePowerSlowWithSlope(void);
+void DoAFCReversePowerFastWithSlope(void);
+unsigned int CalculateDirectionWithSlope(unsigned int current_pos, unsigned int previous_pos, unsigned int current_rev_pwr, unsigned int previous_rev_pwr);
+
 // DPARKER Complte adding 5V and 24V monitoring
 // Need to switch the ADC between external and internal triggering
 
@@ -47,7 +54,7 @@ const unsigned int CoolDownTable[256]     = {COOL_DOWN_TABLE_VALUES};
 */
 
 
-unsigned int reverse_power_data[800];
+unsigned int reverse_power_data[606];
 
 TYPE_POWER_READINGS power_readings;      // This stores the history of the position and power readings for the previous 16 pulses 
 STEPPER_MOTOR afc_motor;                 // This contains the control data for the motor
@@ -90,6 +97,8 @@ int main(void) {
 
 
 void DoStateMachine(void) {
+  unsigned int n;
+  
   switch (global_data_A37434.control_state) {
 
   case STATE_STARTUP:
@@ -123,6 +132,8 @@ void DoStateMachine(void) {
     
     
   case STATE_AUTO_ZERO:
+    afc_motor.min_position = 0;
+    afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     InitializeMotor();
     afc_motor.current_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.target_position  = 0;
@@ -165,7 +176,7 @@ void DoStateMachine(void) {
 	DoPostPulseProcess();
 	DoAFCReversePower();
       }
-
+      
       if (_STATUS_AFC_MODE_MANUAL_MODE) {
 	global_data_A37434.control_state = STATE_RUN_MANUAL;
       }
@@ -185,30 +196,37 @@ void DoStateMachine(void) {
       if (!_STATUS_AFC_MODE_MANUAL_MODE) {
 	global_data_A37434.control_state = STATE_RUN_AFC;
       }
+
+      if (global_data_A37434.afc_auto_calibration_active) {
+	global_data_A37434.control_state = STATE_AUTO_ZERO;
+      }
+      
     }
     break;
 
   case STATE_AUTO_CALIBRATION:
     ADCTriggerINT0();
     _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 1;
-    for (n = 1; n < 800; n++) {
+    for (n = 1; n < 606; n++) {
       reverse_power_data[n] = 0xFFFF;
     }
     while (global_data_A37434.control_state == STATE_AUTO_CALIBRATION) {
-      DoPostPulseProcess();
+      DoA37434();
       if (global_data_A37434.sample_complete) {
-	// Adjust the target position by 64
+	DoPostPulseProcess();
+      	// Adjust the target position by 64
 	// Save the current position/reverse power
 	afc_motor.target_position = ETMMath16Add(afc_motor.current_position, 64);
-	if ((afc_motor.current_position >> 4) < 750) {
-	  reverse_power_data[afc_motor.current_position >> 4] = global_data_A37434.reverse_power_sample;
+	if ((afc_motor.current_position >> 6) < 600) {
+	  reverse_power_data[afc_motor.current_position >> 6] = global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
 	}
       }
       if (afc_motor.current_position >= (AFC_MOTOR_MAX_POSITION - 200)) {
 	// Figure out the best home position
-	new_home_position = FindReversePowerMinimum();
+	global_data_A37434.calculated_home_position = FindReversePowerMinimum();
 	global_data_A37434.afc_auto_calibration_active = 0;
 	global_data_A37434.control_state = STATE_AUTO_ZERO;
+	_STATUS_AFC_AUTO_HOME_COMPLETE = 1;
       }
       
     }
@@ -391,9 +409,12 @@ void DoPostPulseProcess(void) {
 
 void DoAFCReversePower(void) {
   if (global_data_A37434.fast_afc_done == 1) {
-    DoAFCReversePowerSlow();
+    //DoAFCReversePowerSlow();
+    //DoAFCForwardPowerSlow();
+    DoAFCReversePowerSlowWithSlope();
   } else {
-    DoAFCReversePowerFast();
+    //DoAFCReversePowerFast();
+    DoAFCReversePowerFastWithSlope();
     if (CheckForAFCFastDone()) {
       global_data_A37434.fast_afc_done = 1;
       ClearPowerReadings();
@@ -412,6 +433,135 @@ unsigned int CheckForAFCFastDone(void) {
   }
 
   return 0;
+}
+
+
+
+void DoAFCForwardPowerSlow(void) {
+ /* 
+     This strategy is simple
+     
+     Sit at a point for N samples
+     Then move up or down 1 or 2 Step
+     Then sample for N more.
+     Compare and see if it got better or worse
+  */
+  
+  unsigned int next_direction;
+  unsigned int move_amount;
+
+
+  /*
+    A positive change in direction of 64 steps (big move size) will result in a natural decrease in reverse power of 40.  This is irreguardless of tuning
+  */
+  
+  power_readings.reading_accumulator += global_data_A37434.forward_power_sample.reading_scaled_and_calibrated;
+  power_readings.reading_count++;
+  
+  if (power_readings.reading_count >= SAMPLES_AT_EACH_POINT) {
+    // adjust for position change
+
+    power_readings.reading_accumulator >>= 5;
+    power_readings.average_reverse_power_this_sample = power_readings.reading_accumulator;
+
+    if (power_readings.average_reverse_power_this_sample > power_readings.average_reverse_power_previous_sample) {
+      next_direction = power_readings.current_movement_direction;
+      move_amount = MOVE_SIZE_SMALL;
+    } else {
+      move_amount = MOVE_SIZE_BIG;
+      if (power_readings.current_movement_direction == MOVE_DOWN) {
+	next_direction = MOVE_UP;
+      } else {
+	next_direction = MOVE_DOWN;
+      }
+    }
+    
+
+    if (next_direction == MOVE_UP) {
+      afc_motor.target_position = ETMMath16Add(afc_motor.target_position,move_amount); 
+    } else {
+      afc_motor.target_position = ETMMath16Sub(afc_motor.target_position,move_amount);
+    }
+
+    power_readings.average_reverse_power_previous_sample = power_readings.average_reverse_power_this_sample;
+    power_readings.current_movement_direction = next_direction;
+    power_readings.reading_count = 0;
+    power_readings.reading_accumulator = 0;
+
+  }
+}
+
+
+
+void DoAFCReversePowerSlowWithSlope(void) {
+ /* 
+    Sit at a point for N samples
+     Then move up or down 1 or 2 Step
+     Then sample for N more.
+     Compare and see if it got better or worse
+  */
+  
+  unsigned int next_direction;
+  unsigned int move_amount;
+
+  unsigned int slope_adjust;
+  unsigned long slope_long;
+
+  power_readings.reading_accumulator += global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
+  power_readings.reading_count++;
+
+  
+  if (power_readings.reading_count >= SAMPLES_AT_EACH_POINT) {
+    // adjust for position change
+
+    if (afc_motor.current_position > power_readings.previous_position) {
+      slope_long = afc_motor.current_position - power_readings.previous_position;
+      slope_long = slope_long * global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
+      slope_long = slope_long / 10000;
+      slope_long = slope_long * global_data_A37434.slope_factor;
+      slope_long = slope_long / 10000;
+      slope_adjust = slope_long;
+      power_readings.average_reverse_power_previous_sample -= slope_adjust;
+    } else {
+      slope_long = power_readings.previous_position - afc_motor.current_position; 
+      slope_long = slope_long * global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
+      slope_long = slope_long / 10000;
+      slope_long = slope_long * global_data_A37434.slope_factor;
+      slope_long = slope_long / 10000;
+      slope_adjust = slope_long;
+      power_readings.average_reverse_power_previous_sample += slope_adjust;
+    }
+    
+    power_readings.reading_accumulator >>= 5;
+    power_readings.average_reverse_power_this_sample = power_readings.reading_accumulator;
+
+    if (power_readings.average_reverse_power_this_sample < power_readings.average_reverse_power_previous_sample) {
+      next_direction = power_readings.current_movement_direction;
+      move_amount = MOVE_SIZE_SMALL;
+    } else {
+      move_amount = MOVE_SIZE_BIG;
+      if (power_readings.current_movement_direction == MOVE_DOWN) {
+	next_direction = MOVE_UP;
+      } else {
+	next_direction = MOVE_DOWN;
+      }
+    }
+    
+
+    if (next_direction == MOVE_UP) {
+      afc_motor.target_position = ETMMath16Add(afc_motor.target_position,move_amount); 
+    } else {
+      afc_motor.target_position = ETMMath16Sub(afc_motor.target_position,move_amount);
+    }
+
+    power_readings.average_reverse_power_previous_sample = power_readings.average_reverse_power_this_sample;
+    power_readings.current_movement_direction = next_direction;
+    power_readings.reading_count = 0;
+    power_readings.reading_accumulator = 0;
+    power_readings.previous_position = afc_motor.current_position;
+
+  }
+
 }
 
 
@@ -468,6 +618,7 @@ void DoAFCReversePowerSlow(void) {
     power_readings.reading_accumulator = 0;
 
   }
+  power_readings.previous_position = afc_motor.current_position;
 }
 
 
@@ -503,6 +654,81 @@ void DoAFCReversePowerFast(void) {
 					  power_readings.position[relative_index],
 					  global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated,
 					  power_readings.reverse_power[relative_index]);
+  }
+  
+  if (calculated_move > 15) {
+    next_direction = MOVE_DOWN;
+    global_data_A37434.no_decision_counter = 0;
+  } else if (calculated_move < 15) {
+    next_direction = MOVE_UP;
+    global_data_A37434.no_decision_counter = 0;
+  } else {
+    if (global_data_A37434.no_decision_counter < MAX_NO_DECISION_COUNTER) {
+      next_direction = previous_direction;  
+      global_data_A37434.no_decision_counter++;
+    } else {
+      global_data_A37434.no_decision_counter = 0;
+      if (previous_direction == MOVE_UP) {
+	next_direction = MOVE_DOWN;
+      } else {
+	next_direction = MOVE_UP;
+      }
+    }
+  }
+  
+  // Override the direction calculation if the motor is very far from the home position
+
+  if (global_data_A37434.position_at_trigger > ETMMath16Add(afc_motor.home_position, AFC_CONTROL_WINDOW_RANGE)) {
+    next_direction = MOVE_DOWN;
+    ClearPowerReadings();
+  }
+
+  if (global_data_A37434.position_at_trigger < ETMMath16Sub(afc_motor.home_position, AFC_CONTROL_WINDOW_RANGE)) {
+    next_direction = MOVE_UP;
+    ClearPowerReadings();
+  }
+
+
+  // We know what direction we are going to move next.
+  // Figure out how far and how fast we are going to move
+
+  if (next_direction == MOVE_UP) {
+    afc_motor.target_position = ETMMath16Add(afc_motor.current_position, FAST_MOVE_TARGET_DELTA); 
+  } else {
+    afc_motor.target_position = ETMMath16Sub(afc_motor.current_position, FAST_MOVE_TARGET_DELTA);
+  }
+}
+
+void DoAFCReversePowerFastWithSlope(void) {
+  unsigned int relative_index;
+  unsigned int calculated_move;
+  unsigned int previous_direction;
+  unsigned int next_direction;
+  unsigned int n;
+
+  if (global_data_A37434.position_at_trigger > power_readings.position[power_readings.active_index]) {
+    previous_direction = MOVE_UP;
+  } else {
+    previous_direction = MOVE_DOWN;
+  }
+  
+  power_readings.active_index++;
+  power_readings.active_index &= 0x000F;
+  
+  power_readings.reverse_power[power_readings.active_index] = global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated;
+  power_readings.forward_power[power_readings.active_index] = global_data_A37434.forward_power_sample.reading_scaled_and_calibrated;
+  power_readings.position[power_readings.active_index]      = global_data_A37434.position_at_trigger;
+
+
+  relative_index = power_readings.active_index;
+  calculated_move = 0;
+  for (n=0; n<15; n++) {
+    // Need to compare the current data with the 15 prevoius samples
+    relative_index = ((relative_index - 1) & 0x000F);
+    calculated_move += CalculateDirectionWithSlope(global_data_A37434.position_at_trigger,
+						   power_readings.position[relative_index],
+						   global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated,
+						   power_readings.reverse_power[relative_index]);
   }
   
   if (calculated_move > 15) {
@@ -607,6 +833,74 @@ unsigned int CalculateDirection(unsigned int current_pos, unsigned int previous_
 }
 
 
+unsigned int CalculateDirectionWithSlope(unsigned int current_pos, unsigned int previous_pos, unsigned int current_rev_pwr, unsigned int previous_rev_pwr) {
+  unsigned int minimum_rev_power_change;
+  unsigned long slope_long;
+  unsigned int slope_adjust;
+
+  if (current_pos > previous_pos) {
+    slope_long = current_pos - previous_pos;
+    slope_long = slope_long * current_rev_pwr;
+    slope_long = slope_long / 10000;
+    slope_long = slope_long * global_data_A37434.slope_factor;
+    slope_long = slope_long / 10000;
+    slope_adjust = slope_long;
+    previous_rev_pwr -= slope_adjust;
+  } else {
+    slope_long = previous_pos - current_pos;
+    slope_long = slope_long * current_rev_pwr;
+    slope_long = slope_long / 10000;
+    slope_long = slope_long * global_data_A37434.slope_factor;
+    slope_long = slope_long / 10000;
+    slope_adjust = slope_long;
+    slope_adjust = ETMScaleFactor2(slope_adjust, MACRO_DEC_TO_CAL_FACTOR_2(.35),0);
+    previous_rev_pwr += slope_adjust;
+  }
+
+  if (global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated < 11000) {
+    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_11K_MINUS;
+  } else if (global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated < 16000) {
+    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_11K_16K;
+  } else {
+    minimum_rev_power_change = MINIMUM_REV_PWR_CHANGE_16K_PLUS;
+  }
+  
+  
+  if ((previous_pos == 0) || (previous_rev_pwr == 0)) {
+    // The buffer is empty (or bad reading) and has no data in it so skip this comp.
+    return MOVE_NO_DATA;
+  }
+  
+  if ((ETMMath16Add(current_pos, MINIMUM_POSITION_CHANGE) > previous_pos) && (ETMMath16Sub(current_pos, MINIMUM_POSITION_CHANGE) < previous_pos)) {
+    // The positions are very close
+    return MOVE_NO_DATA;
+  } 
+  
+  if ((ETMMath16Add(current_rev_pwr, minimum_rev_power_change) > previous_rev_pwr) && (ETMMath16Sub(current_rev_pwr, minimum_rev_power_change) < previous_rev_pwr)) {
+    // The reverse power readings are very close
+    return MOVE_NO_DATA;
+  }
+  
+  if (current_pos > previous_pos) {
+    if (current_rev_pwr < previous_rev_pwr) {
+      // We need to go up more
+      return MOVE_UP;
+    } else {
+      // We need to go down
+      return MOVE_DOWN;
+    }
+  } else {
+    if (current_rev_pwr < previous_rev_pwr) {
+      // We need to go down more
+      return MOVE_DOWN;
+    } else {
+      // We need to go up
+      return MOVE_UP;
+    }
+  }
+}
+
+
 
 
 void DoAFCCooldown(void) {
@@ -644,6 +938,12 @@ void DoA37434(void) {
   if (_T3IF) {
     _T3IF = 0;
 
+    if (ETMCanSlaveIsNextPulseLevelHigh()) {
+      global_data_A37434.slope_factor = global_data_A37434.slope_factor_cargo;
+    } else {
+      global_data_A37434.slope_factor = global_data_A37434.slope_factor_cab;
+    }
+    
     global_data_A37434.startup_delay++;
     
     // -------------- Update Logging Data ---------------- //
@@ -715,8 +1015,13 @@ void DoA37434(void) {
 
     ETMCanSlaveSetDebugRegister(0x5, global_data_A37434.sample_index);
     ETMCanSlaveSetDebugRegister(0x6, global_data_A37434.test_trigger_received);
-				
+    // 0x7 -> 0x9 are used in auto home
+    ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.slope_factor_cab);
+    ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.slope_factor_cargo);
+    ETMCanSlaveSetDebugRegister(0xC, global_data_A37434.slope_factor);
     
+
+    /*  
     ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.a_adc_reading_external);
     ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.a_adc_reading_internal);
     ETMCanSlaveSetDebugRegister(0xC, global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
@@ -724,7 +1029,7 @@ void DoA37434(void) {
     ETMCanSlaveSetDebugRegister(0xD, global_data_A37434.b_adc_reading_external);
     ETMCanSlaveSetDebugRegister(0xE, global_data_A37434.b_adc_reading_internal);
     ETMCanSlaveSetDebugRegister(0xF, global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
-
+    */
   }
 }
 
@@ -740,7 +1045,7 @@ void UpdateFaults(void) {
     }
   }
   
-  if (_FAULT_CAN_COMMUNICATION_LATCHED || _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS) {
+  if (_FAULT_CAN_COMMUNICATION_LATCHED) {
     _CONTROL_NOT_READY = 1;
   } else {
     _CONTROL_NOT_READY = 0;
@@ -871,6 +1176,7 @@ void __attribute__((interrupt, no_auto_psv)) _DefaultInterrupt(void) {
 
 
 
+#define ETM_CAN_REGISTER_AFC_CMD_DO_AUTO_HOME_POSITION  0x5206
 
 void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
   unsigned int index_word;
@@ -881,8 +1187,11 @@ void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
       /*
 	Place all board specific commands here
       */
+
     case ETM_CAN_REGISTER_AFC_SET_1_HOME_POSITION_AND_OFFSET:
       afc_motor.home_position = message_ptr->word0;
+      global_data_A37434.slope_factor_cab = message_ptr->word1;
+      global_data_A37434.slope_factor_cargo = message_ptr->word2;
       _CONTROL_NOT_CONFIGURED = 0;
       break;
 
@@ -893,8 +1202,16 @@ void ETMCanSlaveExecuteCMDBoardSpecific(ETMCanMessage* message_ptr) {
 
     case ETM_CAN_REGISTER_AFC_CMD_SELECT_MANUAL_MODE:
       _STATUS_AFC_MODE_MANUAL_MODE = 1;
+      if (afc_motor.home_position == 12345) {
+	global_data_A37434.afc_auto_calibration_active = 1;
+      }
       break;
 
+    case ETM_CAN_REGISTER_AFC_CMD_DO_AUTO_HOME_POSITION:
+      global_data_A37434.afc_auto_calibration_active = 1;
+      _STATUS_AFC_AUTO_HOME_COMPLETE = 0;
+      break;
+      
     case ETM_CAN_REGISTER_AFC_CMD_SET_MANUAL_TARGET_POSITION:
       global_data_A37434.manual_target_position = message_ptr->word0;
       break;
@@ -925,8 +1242,8 @@ unsigned int ETMMath16Delta(unsigned int value_1, unsigned int value_2) {
 
 
 
-unsigned int rev_power_position_array[800];
-unsigned int rev_power_power_array[800];
+unsigned int rev_power_position_array[606];
+unsigned int rev_power_power_array[606];
 
 unsigned int FindReversePowerMinimum(void) {
   unsigned int n;
@@ -938,41 +1255,47 @@ unsigned int FindReversePowerMinimum(void) {
   unsigned int local_min;
   unsigned int local_max;
   
-  unsigned int min_value;
-  unsigned int min_position;
-  unsigned int max_value;
-  unsigned int max_position;
+  unsigned int data_n_minus_2;
+  unsigned int data_n_minus_1;
+  unsigned int data_n;
+  unsigned int data_n_plus_1;
+  unsigned int data_n_plus_2;
+    
+  unsigned int minimum_value;
+  unsigned int minimum_position;
 
-
+  
   // First average the data
 
-  avg_count = 0;
-  valid_data_count = 0;
-
+  valid_samples = 0;
   accumulator = 0;
+
   for (n = 0 ; n < 795 ; n++) {
-    if (reverse_power_data[n] < 0xFF00) {
+    if ((reverse_power_data[n] < 0xFF00) & (reverse_power_data[n] > 1000)) {
       // The data is a valid sample
-      rev_power_position_array[avg_count] = n << 4;
-      rev_power_power_array[avg_count] = reverse_power_data[n];
+      rev_power_position_array[valid_samples] = n << 6;
+      rev_power_power_array[valid_samples] = reverse_power_data[n];
       accumulator += reverse_power_data[n];
       valid_samples++;
     }
   }
 
+  ETMCanSlaveSetDebugRegister(0x7, valid_samples);
+  
   if (valid_samples > 100) {
     accumulator = accumulator / valid_samples;
-    average = accumlator;
+    average = accumulator;
   } else {
     // Home Position could not be found;
     return 0;
   }
 
+  ETMCanSlaveSetDebugRegister(0x8, average);
 
   minimum_value = 0xFFFF;
   minimum_position = 0;
   
-  for (n = 2 ; n < valid_samples ; n++) {
+  for (n = 2 ; n < (valid_samples - 2) ; n++) {
     data_n_minus_2 = rev_power_power_array[n - 2];
     data_n_minus_1 = rev_power_power_array[n - 1];
     data_n         = rev_power_power_array[n];
@@ -989,40 +1312,45 @@ unsigned int FindReversePowerMinimum(void) {
     local_avg = accumulator;
     
     
-    local_min = data_n;
-    if (data_n_1 < local_min) {
-      local_min = data_n_1;
-    }
-    if (data_n_2 < local_min) {
-      local_min = data_n_2;
-    }
-    if (data_n_3 < local_min) {
-      local_min = data_n_3;
-    }
-    if (data_n_4 < local_min) {
-      local_min = data_n_4;
+    local_min = data_n_minus_2;
+    
+    if (data_n_minus_1 < local_min) {
+      local_min = data_n_minus_1;
     }
 
-    local_max = data_n;
-    if (data_n_1 > local_max) {
-      local_max = data_n_1;
-    }
-    if (data_n_2 > local_max) {
-      local_max = data_n_2;
-    }
-    if (data_n_3 > local_max) {
-      local_max = data_n_3;
-    }
-    if (data_n_4 > local_max) {
-      local_max = data_n_4;
+    if (data_n < local_min) {
+      local_min = data_n;
     }
 
+    if (data_n_plus_1 < local_min) {
+      local_min = data_n_plus_1;
+    }
+    if (data_n_plus_2 < local_min) {
+      local_min = data_n_plus_2;
+    }
+
+    local_max = data_n_minus_2;
+    
+    if (data_n_minus_1 > local_max) {
+      local_max = data_n_minus_1;
+    }
+    if (data_n > local_max) {
+      local_max = data_n;
+    }
+    if (data_n_plus_1 > local_max) {
+      local_max = data_n_plus_1;
+    }
+    if (data_n_plus_2 > local_max) {
+      local_max = data_n_plus_2;
+    }
+
+#define MAX_LOCAL_DIFFERENCE 2000
 
     if ((local_max - local_min) < MAX_LOCAL_DIFFERENCE) {
       // otherwise there was too much variance between the samples
       if ((local_max - local_min) < (local_avg >> 2)) {
 	// otherwise there was too much variance between the samples
-	if (local_avg < (average >> 3)) {
+	if (local_min > (average >> 3)) {
 	  // otherwise there was not enough signal
 	  if (local_avg < minimum_value) {
 	    minimum_value = local_avg;
@@ -1034,6 +1362,10 @@ unsigned int FindReversePowerMinimum(void) {
     
   }
 
-  return minimum_position;
 
+  ETMCanSlaveSetDebugRegister(0x9, minimum_value);
+  ETMCanSlaveSetDebugRegister(0xA, minimum_position);
+
+  
+  return minimum_position;
 }

@@ -207,6 +207,13 @@ typedef struct {
   unsigned int startup_delay;
 
   unsigned int afc_auto_calibration_active;
+  unsigned int calculated_home_position;
+
+  unsigned int slope_factor;
+
+  unsigned int slope_factor_cargo;
+  unsigned int slope_factor_cab;
+
   
 } AFCControlData;
 
@@ -257,12 +264,16 @@ typedef struct {
   
   unsigned int  reading_count;
   unsigned int  current_movement_direction;
+
+  unsigned int previous_position;
 } TYPE_POWER_READINGS;
 
 
 #define _STATUS_AFC_MODE_MANUAL_MODE                    _LOGGED_STATUS_0
 #define _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS          _LOGGED_STATUS_1
 // DPARKER - REALLY NEED TO UPDATE THE DOCUMENTATION
+#define _STATUS_AFC_AUTO_HOME_COMPLETE                  _LOGGED_STATUS_2
+
 
 #define _FAULT_CAN_COMMUNICATION_LATCHED                _LOGGED_FAULT_0
 
