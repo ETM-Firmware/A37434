@@ -132,10 +132,10 @@ void DoStateMachine(void) {
     
     
   case STATE_AUTO_ZERO:
-    afc_motor.min_position = 0;
-    afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     InitializeMotor();
-    afc_motor.current_position = AFC_MOTOR_MAX_POSITION;
+    afc_motor.min_position = 0;
+    afc_motor.max_position = AFC_MOTOR_MAX_POSITION_STARTUP;
+    afc_motor.current_position = AFC_MOTOR_MAX_POSITION_STARTUP;
     afc_motor.target_position  = 0;
     _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 1;
     while (global_data_A37434.control_state == STATE_AUTO_ZERO) {
@@ -205,6 +205,8 @@ void DoStateMachine(void) {
     break;
 
   case STATE_AUTO_CALIBRATION:
+    afc_motor.min_position = AFC_MOTOR_MIN_POSITION;
+    afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     ADCTriggerINT0();
     _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS = 1;
     for (n = 1; n < 606; n++) {
@@ -1019,7 +1021,9 @@ void DoA37434(void) {
     ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.slope_factor_cab);
     ETMCanSlaveSetDebugRegister(0xB, global_data_A37434.slope_factor_cargo);
     ETMCanSlaveSetDebugRegister(0xC, global_data_A37434.slope_factor);
-    
+
+    ETMCanSlaveSetDebugRegister(0xD, global_data_A37434.reverse_power_sample.reading_scaled_and_calibrated);
+    ETMCanSlaveSetDebugRegister(0xE, global_data_A37434.forward_power_sample.reading_scaled_and_calibrated);
 
     /*  
     ETMCanSlaveSetDebugRegister(0xA, global_data_A37434.a_adc_reading_external);

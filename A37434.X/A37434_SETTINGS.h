@@ -12,9 +12,10 @@
 
 // Motor Configuration
 #define AFC_MOTOR_MIN_POSITION                 1000
-#define AFC_MOTOR_MAX_POSITION                 34000
+#define AFC_MOTOR_MAX_POSITION                 28000
 #define MOTOR_SPEED                            200   // Motor Speed in Full Steps per Second
 
+#define AFC_MOTOR_MAX_POSITION_STARTUP         45000
 
 // Cooldown Configuration
 #define NO_PULSE_TIME_TO_INITITATE_COOLDOWN    100    // 1 second
